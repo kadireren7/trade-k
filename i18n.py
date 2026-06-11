@@ -20,53 +20,79 @@ def t(key: str, **kw) -> str:
 
 
 _HELP_TR = """\
-[bold cyan]Komutlar[/]
-  [bold]/tara[/]                         → Claude tüm piyasayı tarar, AL adayları listeler
-  [bold]/tara kripto|global|forex|emtia|endeks[/] → belirli piyasayı tara
+[bold cyan]Analiz[/]
+  [bold]/tara[/]  [bold]/tara kripto|global|forex|emtia|endeks[/]  → Claude fırsat tarar
+  [bold]/tara long|short|scalp|day|swing|kaldirac[/]  → trade tipine göre tara
   [bold]/durum[/]                        → açık pozisyonları Claude ile analiz et
-  [bold]/onayla 1 3[/]                   → listeden seçtiğin adayları uygula
-  [bold]/reddet[/]                       → bekleyen önerileri temizle
-  [bold]/ai SEMBOL[/]                    → tek sembol analizi     örn: /ai altin
-  [bold]/al SEMBOL TUTAR[/]              → manuel alım (stop/hedef otomatik)
-  [bold]/sat SEMBOL \\[TUTAR][/]           → satış (tutar yoksa hepsi)
-  [bold]/koru SEMBOL[/]                  → Claude stop/hedefi yeniden belirlesin
-  [bold]/otonom ac[/]                    → otonom modu başlat
-  [bold]/otonom kapat[/]                 → otonom modu durdur
-  [bold]/otonom durum[/]                 → otonom mod istatistikleri
-  [bold]/ekle SEMBOL[/]  [bold]/cikar SEMBOL[/]   → kripto izleme listesi (max 5)
-  [bold]/model \\[isim][/]                → Claude modeli: opus / sonnet / haiku / varsayilan
-  [bold]/canli[/]                        → Binance API bağlantısı durumu ve kurulum
-  [bold]/performans[/]  [bold]/gecmis[/]  [bold]/sifirla[/]  [bold]q[/]=çıkış
-[bold cyan]Otonom kurallar:[/] max 2 açık pozisyon | tek işlem max %10 nakit | günlük max 3 işlem
-  min güven %55 | min R/R 1.5 | günlük zarar %2 → oto kapanır | 2 ardışık zarar → kilitlenir
-[bold cyan]Kripto dışı:[/] altin, gumus, petrol, dogalgaz, bakir, eurusd, gbpusd, usdjpy,
-  dolar(USD/TL), sp500, nasdaq, dow, dax, bist"""
+  [bold]/uygula SEMBOL[/]               → /durum kararını uygula (stop güncelle / kâr al / kes)
+  [bold]/uygula hepsi[/]               → tüm bekleyen /durum kararlarını uygula
+  [bold]/onayla 1 3[/]                  → /tara adaylarını uygula
+  [bold]/reddet[/]                      → bekleyen /tara önerilerini temizle
+  [bold]/ai SEMBOL[/]                   → tek sembol derin analiz   örn: /ai altin
+[bold cyan]İşlem (Paper)[/]
+  [bold]/al SEMBOL TUTAR[/]             → Spot Long paper alım   (stop/hedef otomatik)
+  [bold]/sat SEMBOL \\[TUTAR][/]          → Sat (tutar yoksa hepsi)
+  [bold]/short SEMBOL TUTAR[/]          → Short paper (yalnızca realtime kripto)
+  [bold]/scalp SEMBOL TUTAR[/]          → Scalp paper (max 30dk, fee/slippage dahil)
+  [bold]/koru SEMBOL[/]                 → Claude stop/hedefi yeniden belirlesin
+[bold cyan]Scalp[/]
+  [bold]/scalp ac[/]  [bold]/scalp kapat[/]  [bold]/scalp durum[/]
+[bold cyan]Kaldıraç (Paper)[/]
+  [bold]/kaldirac ac[/]  [bold]/kaldirac kapat[/]  [bold]/kaldirac durum[/]
+  [bold yellow3]⚠ Yalnızca PAPER — gerçek kaldıraçlı emir HİÇBİR ZAMAN gönderilmez.[/]
+[bold cyan]Otonom[/]
+  [bold]/otonom ac[/]  [bold]/otonom kapat[/]  [bold]/otonom durum[/]
+  [bold]/otonom mod[/]  [bold]/otonom mod guvenli|dengeli|agresif[/]
+  [bold]/otonom ayar max_islem|max_pozisyon|zarar_serisi|gunluk_zarar N[/]
+[bold cyan]Diğer[/]
+  [bold]/ekle SEMBOL[/]  [bold]/cikar SEMBOL[/]  → kripto izleme listesi (max 5)
+  [bold]/detay SEMBOL[/]               → veri kalitesi + kaldıraç izin bilgisi
+  [bold]/model \\[opus|sonnet|haiku][/]  → Claude modelini değiştir
+  [bold]/canli[/]                       → Binance API bağlantısı
+  [bold]/rapor[/]  [bold]/gecmis[/]  [bold]/sifirla[/]  [bold]/ayarlar[/]  [bold]q[/]=çıkış
+[bold cyan]Not:[/] Otonom mod yalnızca PAPER işlem açar — live bağlantı olsa dahi gerçek emir gönderilmez."""
 
 _HELP_EN = """\
-[bold cyan]Commands[/]
-  [bold]/tara[/]                         → Claude scans the market, lists AL candidates
-  [bold]/tara kripto|global|forex|emtia|endeks[/] → scan specific market
-  [bold]/durum[/]                        → analyze open positions with Claude
-  [bold]/onayla 1 3[/]                   → apply selected candidates
-  [bold]/reddet[/]                       → clear pending suggestions
-  [bold]/ai SYMBOL[/]                    → single symbol analysis    e.g. /ai gold
-  [bold]/al SYMBOL AMOUNT[/]             → manual buy (stop/target auto)
-  [bold]/sat SYMBOL \\[AMOUNT][/]          → sell (all if no amount)
-  [bold]/koru SYMBOL[/]                  → let Claude re-set stop/target
-  [bold]/otonom ac[/]                    → start autonomous mode
-  [bold]/otonom kapat[/]                 → stop autonomous mode
-  [bold]/otonom durum[/]                 → autonomous mode statistics
-  [bold]/ekle SYMBOL[/]  [bold]/cikar SYMBOL[/]   → crypto watchlist (max 5)
-  [bold]/model \\[name][/]                → Claude model: opus / sonnet / haiku / varsayilan
-  [bold]/canli[/]                        → real-money connection (Binance API)
-  [bold]/performans[/]  [bold]/gecmis[/]  [bold]/sifirla[/]  [bold]q[/]=quit
-[bold cyan]Autonomous rules:[/] max 2 positions | single trade max 10% cash | daily max 3 trades
-  min confidence 55% | min R/R 1.5 | daily loss 2% → auto-off | 2 consecutive losses → locked
-[bold cyan]Non-crypto:[/] altin(gold), gumus(silver), petrol(oil), dogalgaz(natgas),
-  bakir(copper), eurusd, gbpusd, usdjpy, dolar(USD/TRY), sp500, nasdaq, dow, dax, bist"""
+[bold cyan]Analysis[/]
+  [bold]/scan[/]  [bold]/scan crypto|global|forex|commodity|index[/]  → Claude scans for opportunities
+  [bold]/scan long|short|scalp|day|swing|leverage[/]  → filter by trade type
+  [bold]/status[/]                       → analyze open positions with Claude
+  [bold]/apply SYMBOL[/]                 → apply /status decision (stop update / take profit / cut)
+  [bold]/apply all[/]                    → apply all pending decisions
+  [bold]/approve 1 3[/]                  → execute /scan candidates
+  [bold]/reject[/]                       → clear pending /scan suggestions
+  [bold]/ai SYMBOL[/]                    → single symbol deep-dive   e.g. /ai gold
+[bold cyan]Trade (Paper)[/]
+  [bold]/buy SYMBOL AMOUNT[/]            → Spot Long paper buy   (stop/target auto)
+  [bold]/sell SYMBOL \\[AMOUNT][/]         → Sell position (all if no amount)
+  [bold]/short SYMBOL AMOUNT[/]          → Short paper (realtime crypto only)
+  [bold]/scalp SYMBOL AMOUNT[/]          → Scalp paper (max 30min, fee/slippage simulated)
+  [bold]/protect SYMBOL[/]              → Let Claude re-set stop/target
+[bold cyan]Scalp[/]
+  [bold]/scalp on[/]  [bold]/scalp off[/]  [bold]/scalp status[/]
+[bold cyan]Leverage (Paper)[/]
+  [bold]/leverage on[/]  [bold]/leverage off[/]  [bold]/leverage status[/]
+  [bold yellow3]⚠ PAPER only — real leveraged orders are NEVER sent.[/]
+[bold cyan]Autonomous[/]
+  [bold]/auto on[/]  [bold]/auto off[/]  [bold]/auto status[/]
+  [bold]/auto mode[/]  [bold]/auto mode safe|balanced|aggressive[/]
+  [bold]/auto set max_trades|max_positions|loss_streak|daily_loss N[/]
+[bold cyan]Other[/]
+  [bold]/add SYMBOL[/]  [bold]/remove SYMBOL[/]  → crypto watchlist (max 5)
+  [bold]/details SYMBOL[/]              → data quality + leverage eligibility
+  [bold]/model \\[opus|sonnet|haiku][/]   → change Claude model
+  [bold]/live[/]                        → Binance API connection
+  [bold]/report[/]  [bold]/history[/]  [bold]/reset[/]  [bold]/settings[/]  [bold]q[/]=quit
+[bold cyan]Note:[/] Autonomous mode is PAPER-only — no real orders even with live connection."""
 
 _STRINGS: dict[str, dict[str, str]] = {
     "help": {"tr": _HELP_TR, "en": _HELP_EN},
+
+    # ── kısa açılış ipucu (startup hint, 1-2 satır) ──
+    "app.hint": {
+        "tr": "[grey58]Komut listesi: [bold]/yardim[/]   Piyasayı tara: [bold]/tara[/]   Manuel alım: [bold]/al BTC 500[/]   Otonom mod: [bold]/otonom ac[/][/grey58]",
+        "en": "[grey58]Commands: [bold]/help[/]   Scan market: [bold]/scan[/]   Manual buy: [bold]/buy BTC 500[/]   Autonomous: [bold]/auto on[/][/grey58]",
+    },
 
     # ── paneller / üst bar ──
     "panel.market": {"tr": " PİYASA ", "en": " MARKETS "},
@@ -79,7 +105,7 @@ _STRINGS: dict[str, dict[str, str]] = {
     "watch.global": {"tr": "── GLOBAL ──", "en": "── GLOBAL ──"},
     "cmd.placeholder": {
         "tr": "Komut yaz... (/yardim)",
-        "en": "Type a command... (/yardim)",
+        "en": "Type a command... (/help)",
     },
 
     "app.started": {
@@ -87,8 +113,8 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "[bold gold3]trade-k[/] started — welcome [bold]{name}[/]! Paper account, real prices.",
     },
     "app.mode_model": {
-        "tr": "Model: [bold]{model}[/]   (/model ile değiştir)  |  Otonom: /otonom ac",
-        "en": "Model: [bold]{model}[/]   (change with /model)  |  Autonomous: /otonom ac",
+        "tr": "Model: [bold]{model}[/]   (/model ile değiştir)  |  Otonom: /otonom ac  /otonom mod",
+        "en": "Model: [bold]{model}[/]   (change with /model)  |  Autonomous: /auto on  /auto mode",
     },
 
     # ── kurulum sihirbazı ──
@@ -174,7 +200,7 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
     "live.status_on": {
         "tr": "Durum: [green3]BAĞLI[/] (API anahtarı doğrulandı) — emirler hâlâ PAPER, gerçek bakiyeni /canli bakiye ile görebilirsin.",
-        "en": "Status: [green3]CONNECTED[/] (API key verified) — orders still PAPER; see real balance with /canli bakiye.",
+        "en": "Status: [green3]CONNECTED[/] (API key verified) — orders still PAPER; see real balance with /live bakiye.",
     },
     "live.validating": {
         "tr": "Anahtarlar Binance'te doğrulanıyor...",
@@ -194,7 +220,7 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
     "live.no_keys": {
         "tr": "Önce bağlan: /canli bagla API_KEY SECRET",
-        "en": "Connect first: /canli bagla API_KEY SECRET",
+        "en": "Connect first: /live bagla API_KEY SECRET",
     },
     "live.balances": {
         "tr": "[bold]Gerçek Binance spot bakiyen:[/]",
@@ -202,7 +228,7 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
     "live.usage": {
         "tr": "Alt komutlar: /canli  /canli bagla KEY SECRET  /canli bakiye  /canli kes",
-        "en": "Subcommands: /canli  /canli bagla KEY SECRET  /canli bakiye  /canli kes",
+        "en": "Subcommands: /live  /live bagla KEY SECRET  /live bakiye  /live kes",
     },
     "live.warning": {
         "tr": (
@@ -211,7 +237,13 @@ _STRINGS: dict[str, dict[str, str]] = {
         ),
         "en": (
             "[dark_orange]⚠ Before going live: I recommend several weeks of positive paper "
-            "performance first. That's what Claude's /performans report card is for.[/]"
+            "performance first. That's what Claude's /report card is for.[/]"
         ),
+    },
+
+    # ── splash menü ──
+    "splash.back": {
+        "tr": "Ana menü için Enter",
+        "en": "Press Enter for main menu",
     },
 }

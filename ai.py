@@ -47,8 +47,79 @@ def _risk_rules() -> str:
     return modes.risk_rules(modes.get(config.current().mode))
 
 
-def _scan_system(category_label: str = "") -> str:
+def _leverage_section(max_leverage: int = 5) -> str:
+    """Tarama promptuna eklenen kaldıraç bölümü."""
+    return f"""
+KALDIRAÇLI PAPER İŞLEM SEÇENEĞİ (sadece ÇOK güçlü setup'ta kullan):
+- confidence >= 70, risk_reward >= 2.0, setup_quality "A" veya "A-" olduğunda LEVERAGE_AL öner
+- Maksimum {max_leverage}x kaldıraç
+- stop_loss ve take_profit ZORUNLU — sıfır veya boş olamaz
+- liquidation_price = giriş × (1 − 1/kaldıraç + 0.005) formülüyle hesapla
+- liquidation_price stop_loss'tan DÜŞÜK olmalı (stop önce tetiklenmelidir)
+- Manipülasyon, pump, düşük likidite → LEVERAGE_AL önerme
+- Short kaldıraç önerme
+- Şüphen varsa SPOT_AL veya BEKLE kullan
+
+LEVERAGE_AL JSON örneği:
+{{"islem":"LEVERAGE_AL","sembol":"BTCUSDT","tutar_usdt":250,"leverage":2,
+  "notional_usdt":500,"basari_yuzdesi":74,"zarar_kes":61800,"kar_al":64900,
+  "liquidation_price":58200,"setup_quality":"A-","risk_reward":2.4,
+  "gerekce":"trend kırılımı + hacim teyidi + düşük manipülasyon riski"}}
+"""
+
+
+def _plan_rules(trade_plan: str, leverage_enabled: bool, max_leverage: int) -> str:
+    """Trade planına göre Claude'a izin verilen işlem tipleri."""
+    lev_section = _leverage_section(max_leverage) if (leverage_enabled and trade_plan == "tam") else ""
+    if trade_plan == "sadece_long":
+        return (
+            "İŞLEM KISITLARI: SADECE AL veya SPOT_AL öner. "
+            "SHORT_AL, SCALP_AL, LEVERAGE_AL KESİNLİKLE YASAK.\n"
+        )
+    elif trade_plan == "dengeli":
+        return (
+            "İŞLEM KISITLARI:\n"
+            "- Piyasa koşuluna göre AL/SPOT_AL, SHORT_AL veya SCALP_AL önerebilirsin.\n"
+            "- LEVERAGE_AL YASAK.\n"
+            "- SHORT_AL: SADECE güçlü düşüş trendi + yüksek likidite kripto (BTC/ETH/SOL). "
+            "  zarar_kes giriş fiyatının ÜSTÜNDE, kar_al ALTINDA olmalı.\n"
+            "- SCALP_AL: SADECE yüksek hacim + momentum, BTC/ETH/SOL/BNB, max 30dk hedef. "
+            "  stop %0.3-%1, hedef %0.5-%2.\n"
+            "- Her piyasa koşulunu dürüstçe değerlendir: "
+            "  yükselişte AL, düşüşte SHORT_AL, yatayda BEKLE. Taraflı olma.\n"
+        ) + lev_section
+    elif trade_plan == "tam":
+        return (
+            "İŞLEM KISITLARI:\n"
+            "- Piyasa koşuluna göre AL/SPOT_AL, SHORT_AL veya SCALP_AL önerebilirsin.\n"
+            "- SHORT_AL: yüksek likidite kripto, zarar_kes > giriş, kar_al < giriş.\n"
+            "- SCALP_AL: BTC/ETH/SOL/BNB, max 30dk, stop %0.3-%1.\n"
+            "- Her piyasa koşulunu dürüstçe değerlendir: "
+            "  yükselişte AL, düşüşte SHORT_AL, yatayda BEKLE.\n"
+        ) + lev_section
+    return "İŞLEM KISITLARI: SADECE AL veya SPOT_AL öner.\n"
+
+
+def _scan_system(
+    category_label: str = "",
+    leverage_enabled: bool = False,
+    max_leverage: int = 5,
+    trade_plan: str = "dengeli",
+) -> str:
     cat_note = f" ({category_label})" if category_label else ""
+    plan_rules = _plan_rules(trade_plan, leverage_enabled, max_leverage)
+
+    # JSON örneği plan'a göre seç
+    if trade_plan == "sadece_long":
+        json_example = '{"islem":"AL","sembol":"BTCUSDT","tutar_usdt":500,"basari_yuzdesi":65,"zarar_kes":60000,"kar_al":65000,"gerekce":"kısa açıklama"}'
+    else:
+        json_example = (
+            '{"islem":"AL","sembol":"BTCUSDT","tutar_usdt":500,"basari_yuzdesi":65,'
+            '"zarar_kes":60000,"kar_al":65000,"direction":"long","trade_style":"swing","gerekce":"..."} '
+            'veya {"islem":"SHORT_AL","sembol":"ETHUSDT","tutar_usdt":400,"basari_yuzdesi":62,'
+            '"zarar_kes":3500,"kar_al":3100,"direction":"short","trade_style":"day","gerekce":"..."}'
+        )
+
     return f"""{PERSONA}
 
 Sana{cat_note} piyasa verisi ve portföy durumu verilecek.
@@ -56,13 +127,14 @@ Sana{cat_note} piyasa verisi ve portföy durumu verilecek.
 ÇIKTI FORMATI (kesin uy, uzun analiz YAZMA):
 1. En fazla 2-3 cümlelik genel piyasa özeti.
 2. Son satır, tek satır JSON:
-ONERILER: [{{"islem":"AL","sembol":"GC=F","tutar_usdt":600,"basari_yuzdesi":62,"zarar_kes":4010.0,"kar_al":4180.0,"gerekce":"tek kısa cümle"}}, ...]
+ONERILER: [{json_example}]
 
-ÖNEMLİ KISITLAMALAR:
-- Sadece AL öner. SAT veya SHORT YASAK — açık pozisyonlar için SAT önerisi vermek İSTENMİYOR.
-- Açık pozisyonları yönetmek için kullanıcı /durum komutunu kullanır.
-- Zaten açık olan sembolde YENİ AL önerme.
-- 2 ila 4 aday. "sembol" alanında SANA VERİLEN kodu aynen kullan (BTCUSDT, GC=F, EURUSD=X...).
+{plan_rules}
+GENEL KISITLAR:
+- SAT komutu YASAK (pozisyon yönetimi /durum ile yapılır).
+- Zaten açık olan sembolde YENİ öneri yapma.
+- 2 ila 4 aday. "sembol" alanında SANA VERİLEN kodu aynen kullan (BTCUSDT, GC=F, ...).
+- Fırsat yoksa BEKLE döndür, zorla öneri yapma.
 {SLTP_RULES}
 {_risk_rules()}"""
 
@@ -89,17 +161,21 @@ Stop/hedef mesafesini, R/R oranını ve mevcut piyasa yapısını değerlendir.
 ÇIKTI FORMATI (kesin uy):
 1-3 cümle genel özet (pozisyon durumu, genel risk, dikkat çekici noktalar).
 Son satır, TEK satır JSON:
-DURUM_ANALIZI: {{"genel_oneri":"...","pozisyonlar":[{{"sembol":"BTCUSDT","karar":"DEVAM","gerekce":"tek cümle","acil":false}}]}}
+DURUM_ANALIZI: {{"genel_oneri":"...","pozisyonlar":[{{"sembol":"BTCUSDT","karar":"DEVAM","gerekce":"tek cümle","acil":false,"new_stop_loss":0,"new_take_profit":0,"close_reason":""}}]}}
 
 Karar seçenekleri (kesinlikle sadece bunlar):
-- DEVAM: pozisyon planlandığı gibi ilerliyor, bekle
-- BEKLE: belirsizlik var, şimdilik tut ama izle
-- KAR_AL: hedefe yakın veya güçlü direnç, kâr al
-- ZARARI_KES: yapı bozuldu veya stop çok yakın, kapat
-- STOP_GUNCELLE: stop güvenli değil veya trailing gerekiyor
+- DEVAM: pozisyon planlandığı gibi ilerliyor → new_stop_loss=0, new_take_profit=0, close_reason=""
+- BEKLE: belirsizlik var, şimdilik izle → new_stop_loss=0, new_take_profit=0, close_reason=""
+- KAR_AL: hedefe yakın veya güçlü direnç, kâr al → close_reason doldur, new_stop_loss=0
+- ZARARI_KES: yapı bozuldu veya stop çok yakın, kapat → close_reason doldur, new_stop_loss=0
+- STOP_GUNCELLE: stop trailing gerekiyor veya güvensiz → new_stop_loss doldur (anlık fiyatın ALTINDA, mevcut stoptan daha iyi)
+- KORU: stop/hedef eksik, ekle → new_stop_loss ve/veya new_take_profit doldur
 
-"acil":true sadece ÇOK güçlü ve acil gerekçeyle (yapı tamamen bozuldu, büyük fakeout).
-Belirsizse acil=false, karar=BEKLE. Çoğu durumda "acil" false olmalı."""
+ALAN KURALLARI:
+- new_stop_loss: STOP_GUNCELLE ve KORU için. Anlık fiyatın ALTINDA olmalı. Long pozisyonda mevcut stoptan daha kötüye çekme.
+- new_take_profit: KORU ve hedef güncellemesi için. Anlık fiyatın ÜSTÜNDE olmalı.
+- close_reason: KAR_AL ve ZARARI_KES için tek cümlelik kapatma gerekçesi; diğerleri için boş.
+- "acil":true sadece ÇOK güçlü ve acil gerekçeyle. Belirsizse acil=false, karar=BEKLE."""
 
 PROTECT_SYSTEM = f"""{PERSONA}
 
@@ -114,13 +190,24 @@ KORUMA: {{"zarar_kes":4010.0,"kar_al":4180.0,"gerekce":"tek cümle"}}
 
 @dataclass
 class Suggestion:
-    islem: str  # AL | SAT | BEKLE
+    islem: str  # AL | SPOT_AL | LEVERAGE_AL | SHORT_AL | SCALP_AL | BEKLE
     sembol: str
     tutar_usdt: float
     basari_yuzdesi: int
     gerekce: str
     zarar_kes: float = 0.0
     kar_al: float = 0.0
+    # Kaldıraç alanları (LEVERAGE_AL için)
+    leverage: int = 1
+    notional_usdt: float = 0.0
+    liquidation_price: float = 0.0
+    setup_quality: str = ""
+    risk_reward: float = 0.0
+    # Yön ve stil alanları
+    direction: str = "long"         # "long" | "short"
+    trade_style: str = "swing"      # "scalp" | "day" | "swing"
+    expected_duration: str = ""     # "30m" | "4h" | "1-3d" vb.
+    invalidation: str = ""          # pozisyon geçersiz sayılma koşulu
 
 
 @dataclass
@@ -133,9 +220,12 @@ class Protection:
 @dataclass
 class PositionDecision:
     sembol: str
-    karar: str  # DEVAM | BEKLE | KAR_AL | ZARARI_KES | STOP_GUNCELLE
+    karar: str  # DEVAM | BEKLE | KAR_AL | ZARARI_KES | STOP_GUNCELLE | KORU
     gerekce: str
     acil: bool = False
+    new_stop_loss: float = 0.0   # STOP_GUNCELLE / KORU için yeni stop fiyatı
+    new_take_profit: float = 0.0 # KORU / hedef güncellemesi için yeni hedef
+    close_reason: str = ""       # KAR_AL / ZARARI_KES için kapatma gerekçesi
 
 
 @dataclass
@@ -144,20 +234,39 @@ class StatusAnalysis:
     pozisyonlar: list[PositionDecision]
 
 
+_VALID_ISLEM = {"AL", "SAT", "BEKLE", "SPOT_AL", "LEVERAGE_AL",
+                "SHORT_AL", "SCALP_AL", "SCALP_SHORT"}
+
+
 def _to_suggestion(d: dict) -> Suggestion | None:
     try:
+        islem = str(d.get("islem", "BEKLE")).upper()
+        if islem not in _VALID_ISLEM:
+            return None
         s = Suggestion(
-            islem=str(d.get("islem", "BEKLE")).upper(),
+            islem=islem,
             sembol=str(d.get("sembol", "")).upper(),
             tutar_usdt=float(d.get("tutar_usdt", 0) or 0),
             basari_yuzdesi=int(d.get("basari_yuzdesi", 0) or 0),
             gerekce=str(d.get("gerekce", "")),
             zarar_kes=float(d.get("zarar_kes", 0) or 0),
             kar_al=float(d.get("kar_al", 0) or 0),
+            leverage=int(d.get("leverage", 1) or 1),
+            notional_usdt=float(d.get("notional_usdt", 0) or 0),
+            liquidation_price=float(d.get("liquidation_price", 0) or 0),
+            setup_quality=str(d.get("setup_quality", "") or ""),
+            risk_reward=float(d.get("risk_reward", 0) or 0),
+            direction=str(d.get("direction", "long") or "long").lower(),
+            trade_style=str(d.get("trade_style", "swing") or "swing").lower(),
+            expected_duration=str(d.get("expected_duration", "") or ""),
+            invalidation=str(d.get("invalidation", "") or ""),
         )
-        return s if s.islem in ("AL", "SAT", "BEKLE") else None
+        return s
     except (ValueError, TypeError):
         return None
+
+
+_ACTIONABLE_ISLEM = {"AL", "SAT", "SPOT_AL", "LEVERAGE_AL", "SHORT_AL", "SCALP_AL", "SCALP_SHORT"}
 
 
 def parse_suggestions(text: str) -> list[Suggestion]:
@@ -169,14 +278,14 @@ def parse_suggestions(text: str) -> list[Suggestion]:
         except json.JSONDecodeError:
             return []
         out = [s for d in items if (s := _to_suggestion(d))]
-        return [s for s in out if s.islem in ("AL", "SAT")]
+        return [s for s in out if s.islem in _ACTIONABLE_ISLEM]
     m = re.search(r"ONERI:\s*(\{.*?\})", text, re.DOTALL)
     if m:
         try:
             s = _to_suggestion(json.loads(m.group(1)))
         except json.JSONDecodeError:
             return []
-        return [s] if s and s.islem in ("AL", "SAT") else []
+        return [s] if s and s.islem in _ACTIONABLE_ISLEM else []
     return []
 
 
@@ -202,7 +311,7 @@ def parse_status_analysis(text: str) -> StatusAnalysis | None:
         return None
     try:
         d = json.loads(m.group(1))
-        valid_kararlar = {"DEVAM", "BEKLE", "KAR_AL", "ZARARI_KES", "STOP_GUNCELLE"}
+        valid_kararlar = {"DEVAM", "BEKLE", "KAR_AL", "ZARARI_KES", "STOP_GUNCELLE", "KORU"}
         pozisyonlar = []
         for p in d.get("pozisyonlar", []):
             karar = str(p.get("karar", "BEKLE")).upper()
@@ -213,6 +322,9 @@ def parse_status_analysis(text: str) -> StatusAnalysis | None:
                 karar=karar,
                 gerekce=str(p.get("gerekce", "")),
                 acil=bool(p.get("acil", False)),
+                new_stop_loss=float(p.get("new_stop_loss", 0) or 0),
+                new_take_profit=float(p.get("new_take_profit", 0) or 0),
+                close_reason=str(p.get("close_reason", "") or ""),
             ))
         return StatusAnalysis(
             genel_oneri=str(d.get("genel_oneri", "")),
@@ -266,20 +378,26 @@ async def scan_market_filtered(
     cash: float,
     positions: dict,
     category: str | None = None,
+    leverage_enabled: bool = False,
+    max_leverage: int = 5,
+    trade_plan: str = "dengeli",
 ) -> str:
-    """Kategori filtreli piyasa taraması. Sadece AL önerileri çıkarır.
+    """Kategori filtreli piyasa taraması.
 
     category: None=tüm, 'kripto', 'global', 'forex', 'emtia', 'endeks'
+    trade_plan: 'sadece_long' | 'dengeli' | 'tam'
     """
+    _plan = trade_plan or "dengeli"
     if category == "kripto":
         movers = await market.fetch_top_movers(12)
+        gorev = "Kripto piyasasını tara. Plan kurallarına göre en iyi 2-4 fırsat bul."
         payload = {
-            "gorev": "Kripto piyasasını tara, en iyi 2-4 AL fırsatını bul.",
+            "gorev": gorev,
             "kripto_en_hareketli": movers,
             "watchlist": watchlist,
             "portfoy": _portfolio_ctx(cash, positions),
         }
-        system = _scan_system("sadece kripto")
+        system = _scan_system("sadece kripto", leverage_enabled, max_leverage, _plan)
 
     elif category in ("emtia", "forex", "endeks", "global"):
         instruments = market.instruments_for_category(category)
@@ -290,28 +408,72 @@ async def scan_market_filtered(
             "endeks": "endeksler (S&P 500, NASDAQ, DOW, DAX, BIST)",
             "global": "global (tüm emtia/forex/endeks)",
         }
+        gorev = f"{cat_labels[category]} piyasasını tara. Plan kurallarına göre en iyi 2-4 fırsat bul."
         payload = {
-            "gorev": f"{cat_labels[category]} piyasasını tara, en iyi 2-4 AL fırsatını bul.",
+            "gorev": gorev,
             "piyasa": snapshot,
             "portfoy": _portfolio_ctx(cash, positions),
         }
-        system = _scan_system(cat_labels[category])
+        system = _scan_system(cat_labels[category], leverage_enabled, max_leverage, _plan)
 
     else:  # None = tüm piyasa
         movers, snapshot = await asyncio.gather(
             market.fetch_top_movers(12),
             market.fetch_yahoo_snapshot(),
         )
+        gorev = (
+            "Tüm piyasayı tara (kripto + emtia/forex/endeks). "
+            "Plan kurallarına göre en iyi 2-4 fırsat bul. "
+            "Her enstrümanı hem yükseliş hem düşüş açısından değerlendir."
+        )
         payload = {
-            "gorev": "Tüm piyasayı tara (kripto + emtia/forex/endeks), en iyi 2-4 AL fırsatını bul.",
+            "gorev": gorev,
             "kripto_en_hareketli": movers,
             "emtia_forex_endeks": snapshot,
             "watchlist": watchlist,
             "portfoy": _portfolio_ctx(cash, positions),
         }
-        system = _scan_system()
+        system = _scan_system("", leverage_enabled, max_leverage, _plan)
 
     prompt = f"Piyasa taraması yap:\n{json.dumps(payload, separators=(',', ':'))}"
+    return await _ask(prompt, system)
+
+
+async def scan_leverage_market(
+    watchlist: list[str],
+    cash: float,
+    positions: dict,
+    max_leverage: int = 5,
+) -> str:
+    """Sadece kaldıraçlı fırsatları ara (/tara kaldirac için).
+
+    Watchlist'in leverage_allowed sembollerini alır (çağıran tarafından
+    zaten filtrelenmiş olmalı); payload'a veri kalite bilgisini ekler.
+    """
+    movers = await market.fetch_top_movers(12)
+    # Watchlist'teki her sembol için veri kalitesini bildir
+    watchlist_with_quality = [
+        {
+            "sembol": s,
+            "veri_kalitesi": market.data_quality(s),
+            "kaldirac_izinli": market.leverage_allowed(s),
+        }
+        for s in watchlist
+    ]
+    payload = {
+        "gorev": (
+            "Sadece kaldıraç izinli (kaldirac_izinli=true) ve veri kalitesi "
+            "'realtime' olan sembolleri değerlendir. "
+            "SADECE çok güçlü kaldıraçlı paper trade fırsatı varsa LEVERAGE_AL öner. "
+            "Yoksa BEKLE döndür. "
+            "confidence < 70, R/R < 2.0, setup_quality A/A- değilse LEVERAGE_AL önerme."
+        ),
+        "kripto_en_hareketli": movers,
+        "watchlist": watchlist_with_quality,
+        "portfoy": _portfolio_ctx(cash, positions),
+    }
+    system = _scan_system("kaldıraç taraması", leverage_enabled=True, max_leverage=max_leverage)
+    prompt = f"Kaldıraçlı paper fırsat taraması:\n{json.dumps(payload, separators=(',', ':'))}"
     return await _ask(prompt, system)
 
 
@@ -341,6 +503,76 @@ async def analyze_positions(positions_data: list[dict], cash: float) -> str:
     }
     prompt = f"Açık pozisyonları analiz et:\n{json.dumps(payload, separators=(',', ':'))}"
     return await _ask(prompt, STATUS_SYSTEM)
+
+
+async def scan_directional(
+    watchlist: list[str],
+    cash: float,
+    positions: dict,
+    direction: str = "long",
+) -> str:
+    """Yönsel/stilsel tarama — long/short/scalp/day/swing."""
+    movers = await market.fetch_top_movers(12)
+
+    direction_instruction = {
+        "long": "Sadece LONG/YÜKSELİŞ fırsatları ara. AL veya SPOT_AL öner.",
+        "yukselis": "Sadece LONG/YÜKSELİŞ fırsatları ara. AL veya SPOT_AL öner.",
+        "short": (
+            "Sadece SHORT/DÜŞÜŞ fırsatları ara. SHORT_AL öner. "
+            "Sadece yüksek likidite realtime kripto (BTC/ETH/SOL gibi). "
+            "Stop fiyatı giriş fiyatının ÜSTÜNDE olmalı. "
+            "Hedef fiyatı giriş fiyatının ALTINDA olmalı."
+        ),
+        "dusus": (
+            "Sadece SHORT/DÜŞÜŞ fırsatları ara. SHORT_AL öner. "
+            "Sadece yüksek likidite realtime kripto."
+        ),
+        "scalp": (
+            "Sadece SCALP (hızlı işlem, max 30dk) fırsatları ara. SCALP_AL öner. "
+            "Sadece yüksek likidite Binance kripto (BTC/ETH/SOL/BNB). "
+            "Küçük hedef/stop (%0.3-%1). Yüksek momentum ve hacim teyidi şart. "
+            "Komisyon: %0.1 açılış + %0.1 kapanış."
+        ),
+        "hizli": "Sadece SCALP fırsatları ara. SCALP_AL öner.",
+        "day": "Gün içi işlem (day trade) fırsatları ara. 15m/1h yapısına göre.",
+        "swing": "Swing trade fırsatları ara. 4h/1d mantığıyla. AL veya SPOT_AL öner.",
+    }.get(direction, "Genel piyasa taraması yap.")
+
+    direction_json_example = {
+        "long": '{"islem":"AL","sembol":"BTCUSDT","direction":"long","trade_style":"swing","tutar_usdt":500,"basari_yuzdesi":65,"zarar_kes":60000,"kar_al":65000,"gerekce":"kisa aciklama"}',
+        "short": '{"islem":"SHORT_AL","sembol":"BTCUSDT","direction":"short","trade_style":"day","zarar_kes":65000,"kar_al":60000,"tutar_usdt":500,"basari_yuzdesi":60,"gerekce":"kisa aciklama"}',
+        "scalp": '{"islem":"SCALP_AL","sembol":"BTCUSDT","direction":"long","trade_style":"scalp","expected_duration":"15m","zarar_kes":62000,"kar_al":63000,"tutar_usdt":300,"basari_yuzdesi":58,"gerekce":"kisa aciklama"}',
+    }.get(direction, '{"islem":"AL","sembol":"BTCUSDT","direction":"long","trade_style":"swing","tutar_usdt":500,"basari_yuzdesi":65,"zarar_kes":60000,"kar_al":65000,"gerekce":"kisa aciklama"}')
+
+    payload = {
+        "gorev": direction_instruction,
+        "kripto_en_hareketli": movers,
+        "watchlist": watchlist,
+        "portfoy": _portfolio_ctx(cash, positions),
+    }
+    system = f"""{PERSONA}
+
+Sana piyasa verisi verilecek. {direction_instruction}
+
+ÇIKTI FORMATI:
+1. En fazla 2-3 cümle piyasa özeti.
+2. Son satır JSON:
+ONERILER: [{direction_json_example}]
+
+Ekstra alanlar (zorunlu):
+- "direction": "long" veya "short"
+- "trade_style": "scalp" veya "day" veya "swing"
+- "expected_duration": beklenen süre ("15m", "2h", "1-2d" vb.)
+- "invalidation": pozisyonun geçersiz sayılacağı koşul
+- "zarar_kes" ve "kar_al": ZORUNLU, sıfır olamaz
+
+SHORT için: zarar_kes > giriş fiyatı, kar_al < giriş fiyatı
+SCALP için: stop %0.3-%1, hedef %0.5-%2, sadece BTC/ETH/SOL/BNB
+
+{SLTP_RULES}
+{_risk_rules()}"""
+    prompt = f"Yönsel tarama ({direction}):\n{json.dumps(payload, separators=(',', ':'))}"
+    return await _ask(prompt, system)
 
 
 async def protect_position(symbol: str, entry: float, qty: float,

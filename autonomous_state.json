@@ -4,5 +4,7 @@
   "consecutive_losses": 0,
   "daily_start_equity": 9996.670135832326,
   "daily_date": "2026-06-11",
-  "risk_locked": false
+  "risk_locked": false,
+  "daily_leveraged_trades": 0,
+  "daily_leverage_locked": false
 }

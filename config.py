@@ -37,14 +37,23 @@ DEFAULT_MODEL = "sonnet"
 
 @dataclass
 class Config:
-    language: str = "tr"          # tr | en
+    language: str = "tr"              # tr | en
     name: str = ""
-    pw_salt: str = ""             # hex
-    pw_hash: str = ""             # hex (PBKDF2-SHA256)
-    mode: str = "standart"        # modes.MODES anahtarı
-    model: str = DEFAULT_MODEL    # MODELS anahtarı
+    pw_salt: str = ""                 # hex
+    pw_hash: str = ""                 # hex (PBKDF2-SHA256)
+    mode: str = "standart"            # modes.MODES anahtarı (manuel işlemler için)
+    model: str = DEFAULT_MODEL        # MODELS anahtarı
     binance_key: str = ""
     binance_secret: str = ""
+    autonomous_mode: str = "dengeli"   # otonom risk profili: guvenli/dengeli/agresif
+    trade_plan: str = "dengeli"        # sadece_long | dengeli | tam
+    leverage_enabled: bool = False     # kaldıraçlı paper öneriler (varsayılan kapalı)
+    scalp_enabled: bool = False        # scalp paper modu (varsayılan kapalı)
+    custom_max_positions: int = 0      # 0 = profil varsayılanı kullan
+    custom_max_daily_trades: int = 0   # 0 = profil varsayılanı kullan
+    custom_loss_streak: int = 0        # 0 = profil varsayılanı kullan
+    custom_daily_loss_pct: float = 0.0 # 0.0 = profil varsayılanı kullan
+    theme: str = "cyber"               # cyber | minimal | matrix | amber
 
     # ---- şifre ----
     @staticmethod

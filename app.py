@@ -7,15 +7,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from datetime import datetime
 from pathlib import Path
 
 from rich.table import Table
 from rich.text import Text
-from textual import work
+from textual import events, work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Footer, Input, RichLog, Static
+
+import commands as cmd_mod
 
 import ai
 import config as config_mod
@@ -27,7 +30,7 @@ from autonomous import AutonomousEngine
 from config import MODELS, Config
 from i18n import t
 from portfolio import Portfolio, sanitize_levels
-from screens import LoginScreen, SetupScreen
+from screens import LoginScreen, SetupScreen, SplashMenuScreen
 from tracker import STATUS_TR, Tracker
 
 WATCHLIST_FILE = Path(__file__).parent / "watchlist.json"
@@ -64,6 +67,7 @@ class AccountBar(Static):
         auto_risk_locked: bool,
         open_positions: int,
         daily_pnl: float,
+        ws_connected: bool = True,
     ) -> None:
         pnl = equity - start
         pct = pnl / start * 100
@@ -81,6 +85,12 @@ class AccountBar(Static):
             txt.append(" OTONOM:AÇIK ", style="bold black on green3")
         else:
             txt.append(" OTONOM:KAPALI ", style="bold white on grey23")
+
+        # WS bağlantı durumu
+        if ws_connected:
+            txt.append(" WS:ON ", style="bold black on green3")
+        else:
+            txt.append(" WS:OFF ", style="bold white on red3")
 
         # Risk kilidi
         if auto_risk_locked:
@@ -104,9 +114,41 @@ class AccountBar(Static):
         self.update(txt)
 
 
+class CommandInput(Input):
+    """Input subclass — palette navigation keylerini yakalar."""
+
+    def _on_key(self, event: events.Key) -> None:
+        app: "TradeApp" = self.app  # type: ignore[assignment]
+        if app._palette_visible:
+            if event.key in ("down", "tab"):
+                app._palette_cursor = min(app._palette_cursor + 1,
+                                          len(app._palette_items) - 1)
+                app._update_palette_display()
+                event.prevent_default()
+                event.stop()
+                return
+            elif event.key == "up":
+                app._palette_cursor = max(0, app._palette_cursor - 1)
+                app._update_palette_display()
+                event.prevent_default()
+                event.stop()
+                return
+            elif event.key == "escape":
+                app._close_palette()
+                event.prevent_default()
+                event.stop()
+                return
+            elif event.key == "enter":
+                app._apply_palette_selection()
+                event.prevent_default()
+                event.stop()
+                return
+        super()._on_key(event)
+
+
 class TradeApp(App):
     CSS_PATH = "app.tcss"
-    BINDINGS = [("q", "quit", "Çıkış")]
+    BINDINGS = [("q", "action_open_menu", "Menü")]
     TITLE = "trade-k"
 
     def __init__(self) -> None:
@@ -129,6 +171,11 @@ class TradeApp(App):
         # Günlük başlangıç varlığı (günlük PnL hesabı için)
         self._daily_start_equity: float = 0.0
         self._daily_date: str = ""
+        # Komut paleti
+        self._palette_items: list = []
+        self._palette_cursor: int = 0
+        self._palette_visible: bool = False
+        self._main_started: bool = False
 
     # ── yerleşim ─────────────────────────────────────────────────────────────
 
@@ -145,7 +192,8 @@ class TradeApp(App):
             with Vertical(id="right"):
                 yield Static(t("panel.log"), id="title-log", classes="paneltitle")
                 yield RichLog(id="log", wrap=True, markup=True)
-        yield Input(placeholder=t("cmd.placeholder"), id="cmd")
+        yield Static("", id="palette")
+        yield CommandInput(placeholder=t("cmd.placeholder"), id="cmd")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -153,6 +201,33 @@ class TradeApp(App):
             self.push_screen(SetupScreen(), self._after_setup)
         else:
             self.push_screen(LoginScreen(self.cfg), self._after_login)
+
+    def action_open_menu(self) -> None:
+        if not self._main_started:
+            return
+        summary = self._portfolio_summary()
+        self.push_screen(SplashMenuScreen(self.cfg, summary), self._after_menu)
+
+    def _after_menu(self, result) -> None:
+        if result == "exit":
+            self.exit()
+        elif result == "auto_start":
+            if self._auto_engine:
+                self.run_worker(self._do_auto_start(), exclusive=False)
+
+    async def _do_auto_start(self) -> None:
+        log = self.query_one("#log", RichLog)
+        msg = await self._auto_engine.start()
+        if msg:
+            log.write(msg)
+        else:
+            log.write(t("otonom.started"))
+
+    def _portfolio_summary(self) -> str:
+        prices = {s: tk.price for s, tk in self.feed.tickers.items()}
+        eq = self.portfolio.equity(prices)
+        pos_count = len(self.portfolio.positions)
+        return f"Varlık: {eq:,.0f} USDT | {pos_count} pozisyon"
 
     def _after_setup(self, cfg: Config) -> None:
         self.cfg = cfg
@@ -164,9 +239,17 @@ class TradeApp(App):
         if not ok:
             self.exit()
             return
-        self.run_worker(self._start_main(), exclusive=False)
+        summary = self._portfolio_summary()
+        self.push_screen(SplashMenuScreen(self.cfg, summary), self._after_splash)
 
-    async def _start_main(self, first_run: bool = False) -> None:
+    def _after_splash(self, result) -> None:
+        if result == "exit":
+            self.exit()
+            return
+        auto_start = (result == "auto_start")
+        self.run_worker(self._start_main(auto_start=auto_start), exclusive=False)
+
+    async def _start_main(self, first_run: bool = False, auto_start: bool = False) -> None:
         self.query_one("#title-market", Static).update(t("panel.market"))
         self.query_one("#title-positions", Static).update(t("panel.positions"))
         self.query_one("#title-log", Static).update(t("panel.log"))
@@ -181,10 +264,10 @@ class TradeApp(App):
         pos = self.query_one("#positions", DataTable)
         if i18n.lang() == "en":
             pos.add_columns("Instrument", "Qty", "Entry", "Now", "P/L", "P/L %",
-                            "Stop", "Target", "Stop%", "Tgt%", "Decision")
+                            "Stop", "Target", "Stop%", "Tgt%", "Duration", "Decision")
         else:
             pos.add_columns("Enstrüman", "Miktar", "Giriş", "Şimdi", "K/Z", "K/Z %",
-                            "Stop", "Hedef", "Stop%", "Hdf%", "Karar")
+                            "Stop", "Hedef", "Stop%", "Hdf%", "Süre", "Karar")
 
         # Otonom motoru başlat
         self._auto_engine = AutonomousEngine(
@@ -208,11 +291,15 @@ class TradeApp(App):
             log.write(t("setup.done", name=self.cfg.name))
         log.write(t("app.started", name=self.cfg.name))
         log.write(t("app.mode_model", model=self.cfg.model))
-        log.write(t("help"))
+        log.write(t("app.hint"))
         await self.feed.start()
         self.set_interval(0.5, self.refresh_tables)
         self.set_interval(2.0, self.check_protections)
-        self.query_one("#cmd", Input).focus()
+        self._main_started = True
+        self.query_one("#cmd", CommandInput).focus()
+        if auto_start and self._auto_engine:
+            msg = await self._auto_engine.start()
+            log.write(msg if msg else t("otonom.started"))
 
     def _sync_feed_bg(self) -> None:
         """Otonom motordan çağrılabilen sync wrapper."""
@@ -227,6 +314,67 @@ class TradeApp(App):
 
     async def _sync_feed(self) -> None:
         await self.feed.set_symbols(self._feed_symbols())
+
+    # ── komut paleti ──────────────────────────────────────────────────────────
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "cmd":
+            return
+        val = event.value.strip()
+        if not val.startswith("/"):
+            self._close_palette()
+            return
+        ctx = {
+            "has_positions": bool(self.portfolio.positions),
+            "auto_enabled": bool(self._auto_engine and self._auto_engine.enabled),
+            "scalp_enabled": bool(self.cfg and self.cfg.scalp_enabled),
+            "leverage_enabled": bool(self.cfg and self.cfg.leverage_enabled),
+        }
+        self._palette_items = cmd_mod.get_palette_suggestions(val, ctx)
+        self._palette_cursor = 0
+        if self._palette_items:
+            self._palette_visible = True
+            self._update_palette_display()
+        else:
+            self._close_palette()
+
+    def _update_palette_display(self) -> None:
+        lang = i18n.lang()
+        lines = []
+        for i, (cmd_text, cat, desc_tr, desc_en) in enumerate(self._palette_items[:8]):
+            cursor = "▶" if i == self._palette_cursor else " "
+            highlight = "bold gold3" if i == self._palette_cursor else "white"
+            cat_str = f"[grey50]{cat[:10]:10}[/]"
+            desc = desc_en if (lang == "en" and desc_en) else desc_tr
+            desc_str = f"[grey70]{desc[:38]:38}[/]"
+            lines.append(f" {cursor} [{highlight}]{cmd_text:<20}[/] {cat_str} {desc_str}")
+        if lang == "tr":
+            lines.append("[grey50] ↑↓ seç  Tab ilerle  Enter çalıştır  Esc kapat[/]")
+        else:
+            lines.append("[grey50] ↑↓ move  Tab next  Enter run  Esc close[/]")
+        try:
+            self.query_one("#palette", Static).update("\n".join(lines))
+        except Exception:
+            pass
+
+    def _close_palette(self) -> None:
+        self._palette_visible = False
+        self._palette_items = []
+        self._palette_cursor = 0
+        try:
+            self.query_one("#palette", Static).update("")
+        except Exception:
+            pass
+
+    def _apply_palette_selection(self) -> None:
+        if not self._palette_items:
+            return
+        idx = min(self._palette_cursor, len(self._palette_items) - 1)
+        cmd_text = self._palette_items[idx][0]
+        cmd_inp = self.query_one("#cmd", CommandInput)
+        cmd_inp.value = cmd_text
+        cmd_inp.cursor_position = len(cmd_text)
+        self._close_palette()
 
     # ── tablo yenileme ────────────────────────────────────────────────────────
 
@@ -243,99 +391,134 @@ class TradeApp(App):
         arrow = "▲" if tk.price > tk.prev_price else (
             "▼" if tk.price < tk.prev_price else " "
         )
+        # Price age indicator for Yahoo symbols
+        if market.is_yahoo(sym) and tk.last_updated:
+            age = time.time() - tk.last_updated
+            if age < 5:
+                age_color = "green3"
+            elif age < 30:
+                age_color = "gold3"
+            else:
+                age_color = "red3"
+            price_txt = Text(f"{fmt_price(tk.price)} {arrow}", style=tick_color)
+            price_txt.append(f" ·{int(age)}s", style=age_color)
+        else:
+            price_txt = Text(f"{fmt_price(tk.price)} {arrow}", style=tick_color)
         watch.add_row(
             Text(market.short_name(sym), style="bold"),
-            Text(f"{fmt_price(tk.price)} {arrow}", style=tick_color),
+            price_txt,
             Text(f"{tk.change_pct:+.2f}%", style=chg_color),
             Text(fmt_price(tk.high), style="grey58"),
             Text(fmt_price(tk.low), style="grey58"),
         )
 
     def refresh_tables(self) -> None:
-        watch = self.query_one("#watch", DataTable)
-        watch.clear()
-        watch.add_row(Text(t("watch.crypto"), style="bold grey50"), "", "", "", "")
-        for sym in self.watchlist:
-            self._watch_row(watch, sym)
-        watch.add_row(Text(t("watch.global"), style="bold grey50"), "", "", "", "")
-        for sym in market.SCAN_INSTRUMENTS:
-            self._watch_row(watch, sym)
+        try:
+            watch = self.query_one("#watch", DataTable)
+            watch.clear()
+            watch.add_row(Text(t("watch.crypto"), style="bold grey50"), "", "", "", "")
+            for sym in self.watchlist:
+                self._watch_row(watch, sym)
+            watch.add_row(Text(t("watch.global"), style="bold grey50"), "", "", "", "")
+            for sym in market.SCAN_INSTRUMENTS:
+                self._watch_row(watch, sym)
 
-        pos_table = self.query_one("#positions", DataTable)
-        pos_table.clear()
-        for sym, p in self.portfolio.positions.items():
-            cur = self.feed.price(sym) or p.entry
-            pnl, pct = self.portfolio.unrealized_pnl(sym, cur)
-            color = "green3" if pnl >= 0 else "red3"
-            sign = "+" if pnl >= 0 else ""
+            pos_table = self.query_one("#positions", DataTable)
+            pos_table.clear()
+            for sym, p in self.portfolio.positions.items():
+                cur = self.feed.price(sym) or p.entry
+                pnl, pct = self.portfolio.unrealized_pnl(sym, cur)
+                color = "green3" if pnl >= 0 else "red3"
+                sign = "+" if pnl >= 0 else ""
 
-            # Stop/hedef mesafe %
-            stop_pct_txt = Text("—", style="grey50")
-            if p.stop and cur > 0:
-                sp = (cur - p.stop) / cur * 100
-                sp_color = "red3" if sp < 2 else "dark_orange" if sp < 5 else "grey70"
-                stop_pct_txt = Text(f"{sp:.1f}%", style=sp_color)
+                # Stop/hedef mesafe %
+                stop_pct_txt = Text("—", style="grey50")
+                if p.stop and cur > 0:
+                    sp = (cur - p.stop) / cur * 100
+                    sp_color = "red3" if sp < 2 else "dark_orange" if sp < 5 else "grey70"
+                    stop_pct_txt = Text(f"{sp:.1f}%", style=sp_color)
 
-            tgt_pct_txt = Text("—", style="grey50")
-            if p.target and cur > 0:
-                tp = (p.target - cur) / cur * 100
-                tp_color = "green3" if tp < 5 else "grey70"
-                tgt_pct_txt = Text(f"{tp:.1f}%", style=tp_color)
+                tgt_pct_txt = Text("—", style="grey50")
+                if p.target and cur > 0:
+                    tp = (p.target - cur) / cur * 100
+                    tp_color = "green3" if tp < 5 else "grey70"
+                    tgt_pct_txt = Text(f"{tp:.1f}%", style=tp_color)
 
-            # Son Claude kararı
-            karar = self._position_decisions.get(sym, "")
-            karar_colors = {
-                "DEVAM": "green3", "BEKLE": "gold3", "KAR_AL": "green3",
-                "ZARARI_KES": "red3", "STOP_GUNCELLE": "dark_orange",
-            }
-            karar_txt = (
-                Text(karar, style=karar_colors.get(karar, "grey50"))
-                if karar else Text("—", style="grey50")
+                # Son Claude kararı
+                karar = self._position_decisions.get(sym, "")
+                karar_colors = {
+                    "DEVAM": "green3", "BEKLE": "gold3", "KAR_AL": "green3",
+                    "ZARARI_KES": "red3", "STOP_GUNCELLE": "dark_orange",
+                }
+                karar_txt = (
+                    Text(karar, style=karar_colors.get(karar, "grey50"))
+                    if karar else Text("—", style="grey50")
+                )
+
+                # Süre / Duration sütunu
+                now_ts = time.time()
+                elapsed = now_ts - (p.opened_at or now_ts)
+                if p.trade_style == "scalp":
+                    from portfolio import SCALP_MAX_DURATION
+                    remaining = max(0.0, SCALP_MAX_DURATION - elapsed)
+                    rm = int(remaining // 60)
+                    rs = int(remaining % 60)
+                    dur_color = "red3" if remaining < 300 else ("gold3" if remaining < 600 else "cyan")
+                    dur_txt = Text(f"⏱{rm}:{rs:02d}", style=dur_color)
+                elif elapsed < 3600:
+                    dur_txt = Text(f"{int(elapsed // 60)}m", style="grey58")
+                elif elapsed < 86400:
+                    dur_txt = Text(f"{int(elapsed // 3600)}h{int((elapsed % 3600) // 60)}m", style="grey58")
+                else:
+                    dur_txt = Text(f"{int(elapsed // 86400)}d", style="grey58")
+
+                pos_table.add_row(
+                    Text(market.short_name(sym), style="bold"),
+                    f"{p.qty:.6f}",
+                    fmt_price(p.entry),
+                    fmt_price(cur),
+                    Text(f"{sign}{pnl:,.2f}", style=color),
+                    Text(f"{sign}{pct:.2f}%", style=color),
+                    Text(fmt_price(p.stop), style="red3") if p.stop
+                    else Text("—", style="grey50"),
+                    Text(fmt_price(p.target), style="green3") if p.target
+                    else Text("—", style="grey50"),
+                    stop_pct_txt,
+                    tgt_pct_txt,
+                    dur_txt,
+                    karar_txt,
+                )
+
+            # Günlük PnL hesapla
+            all_prices = {s: tk.price for s, tk in self.feed.tickers.items()}
+            cur_equity = self.portfolio.equity(all_prices)
+
+            today = datetime.now().strftime("%Y-%m-%d")
+            if today != self._daily_date:
+                self._daily_date = today
+                self._daily_start_equity = cur_equity
+
+            daily_pnl = cur_equity - self._daily_start_equity
+
+            auto_enabled = bool(self._auto_engine and self._auto_engine.enabled)
+            auto_trades = self._auto_engine.daily_trades if self._auto_engine else 0
+            auto_locked = bool(self._auto_engine and self._auto_engine.risk_locked)
+
+            self.query_one("#account", AccountBar).update_view(
+                equity=cur_equity,
+                cash=self.portfolio.cash,
+                start=10_000.0,
+                live_ok=bool(self.cfg and self.cfg.binance_key),
+                name=self.cfg.name if self.cfg else "",
+                auto_enabled=auto_enabled,
+                auto_daily_trades=auto_trades,
+                auto_risk_locked=auto_locked,
+                open_positions=len(self.portfolio.positions),
+                daily_pnl=daily_pnl,
+                ws_connected=self.feed.ws_connected if self.feed.crypto_symbols else True,
             )
-
-            pos_table.add_row(
-                Text(market.short_name(sym), style="bold"),
-                f"{p.qty:.6f}",
-                fmt_price(p.entry),
-                fmt_price(cur),
-                Text(f"{sign}{pnl:,.2f}", style=color),
-                Text(f"{sign}{pct:.2f}%", style=color),
-                Text(fmt_price(p.stop), style="red3") if p.stop
-                else Text("—", style="grey50"),
-                Text(fmt_price(p.target), style="green3") if p.target
-                else Text("—", style="grey50"),
-                stop_pct_txt,
-                tgt_pct_txt,
-                karar_txt,
-            )
-
-        # Günlük PnL hesapla
-        all_prices = {s: tk.price for s, tk in self.feed.tickers.items()}
-        cur_equity = self.portfolio.equity(all_prices)
-
-        today = datetime.now().strftime("%Y-%m-%d")
-        if today != self._daily_date:
-            self._daily_date = today
-            self._daily_start_equity = cur_equity
-
-        daily_pnl = cur_equity - self._daily_start_equity
-
-        auto_enabled = bool(self._auto_engine and self._auto_engine.enabled)
-        auto_trades = self._auto_engine.daily_trades if self._auto_engine else 0
-        auto_locked = bool(self._auto_engine and self._auto_engine.risk_locked)
-
-        self.query_one("#account", AccountBar).update_view(
-            equity=cur_equity,
-            cash=self.portfolio.cash,
-            start=10_000.0,
-            live_ok=bool(self.cfg and self.cfg.binance_key),
-            name=self.cfg.name if self.cfg else "",
-            auto_enabled=auto_enabled,
-            auto_daily_trades=auto_trades,
-            auto_risk_locked=auto_locked,
-            open_positions=len(self.portfolio.positions),
-            daily_pnl=daily_pnl,
-        )
+        except Exception:
+            pass
 
     # ── komutlar ─────────────────────────────────────────────────────────────
 
@@ -363,6 +546,16 @@ class TradeApp(App):
         parts = cmd.split()
         op = parts[0].lower().lstrip("/")
 
+        # TR/EN alias tablosu
+        _ALIASES = {
+            "scan": "tara", "status": "durum", "buy": "al", "sell": "sat",
+            "protect": "koru", "auto": "otonom", "approve": "onayla",
+            "reject": "reddet", "add": "ekle", "remove": "cikar",
+            "report": "performans", "rapor": "performans",
+            "reset": "sifirla",
+        }
+        op = _ALIASES.get(op, op)
+
         if op in ("yardim", "help", "h"):
             log.write(t("help"))
 
@@ -375,6 +568,24 @@ class TradeApp(App):
             log.write(f"[green3]{self.portfolio.buy(sym, usdt, price)}[/]")
             await self._sync_feed()
             self.run_protect(sym)
+
+        elif op == "short":
+            if len(parts) < 3:
+                raise ValueError("Kullanım: /short SEMBOL TUTAR  (örn: /short btcusdt 500)")
+            sym = market.resolve_symbol(parts[1])
+            allowed, reason = market.trade_allowed(sym)
+            if not allowed:
+                raise ValueError(reason)
+            raise ValueError("Short paper işlemi bu sürümde desteklenmiyor.")
+
+        elif op == "scalp":
+            if len(parts) < 3:
+                raise ValueError("Kullanım: /scalp SEMBOL TUTAR")
+            sym = market.resolve_symbol(parts[1])
+            allowed, reason = market.trade_allowed(sym)
+            if not allowed:
+                raise ValueError(reason)
+            raise ValueError("Scalp paper işlemi bu sürümde desteklenmiyor.")
 
         elif op == "sat":
             if len(parts) < 2:
@@ -483,10 +694,13 @@ class TradeApp(App):
             self._position_decisions.clear()
             all_prices = {s: tk.price for s, tk in self.feed.tickers.items()}
             self._daily_start_equity = self.portfolio.equity(all_prices)
-            log.write(
-                "[bold]Hesap sıfırlandı: 10.000 USDT[/] "
-                "[grey58](öneri geçmişi /performans için saklandı)[/]"
-            )
+            log.clear()
+            if i18n.lang() == "tr":
+                log.write("[bold]Hesap sıfırlandı — 10.000 USDT[/] "
+                          "[grey58](öneri geçmişi /rapor için saklandı)[/]")
+            else:
+                log.write("[bold]Account reset — 10,000 USDT[/] "
+                          "[grey58](recommendation history kept for /report)[/]")
 
         else:
             raise ValueError(f"Bilinmeyen komut: /{op}  (/yardim)")
@@ -696,6 +910,21 @@ class TradeApp(App):
             self.cfg.save()
             log.write(t("live.connected"))
             log.write(t("live.warning"))
+            # Layer 5: Performance threshold check
+            prices = await self._tracker_prices()
+            stats = self.tracker.stats(prices)
+            total = stats.get("onaylanan", 0)
+            win_rate = stats.get("basari_orani")
+            if total < 10:
+                log.write(
+                    f"[dark_orange]⚠ Öneri: Gerçek paraya geçmeden önce en az 10 onaylanan işlem "
+                    f"önerilir. Şu an: {total}[/]"
+                )
+            elif win_rate is not None and win_rate < 45:
+                log.write(
+                    f"[dark_orange]⚠ Uyarı: Paper başarı oranı %{win_rate:.0f} — "
+                    f"gerçek paraya geçmek için %50+ önerilir.[/]"
+                )
 
         elif sub == "bakiye":
             if not self.cfg.binance_key:
@@ -816,21 +1045,30 @@ class TradeApp(App):
             log.write(
                 f"[bold cyan]── Claude piyasayı tarıyor{cat_label}... ──[/]"
             )
+            trade_plan = getattr(self.cfg, "trade_plan", "dengeli")
+            lev_enabled = getattr(self.cfg, "leverage_enabled", False)
             full = await ai.scan_market_filtered(
-                list(self.watchlist), self.portfolio.cash, positions, category
+                list(self.watchlist), self.portfolio.cash, positions, category,
+                leverage_enabled=lev_enabled,
+                trade_plan=trade_plan,
             )
             summary = ai.strip_machine_lines(full)
             if summary:
                 log.write(summary)
 
             self.pending = ai.parse_suggestions(full)
-            # Sadece AL önerilerini pending'e al
-            self.pending = [s for s in self.pending if s.islem == "AL"]
+            # Kabul edilen işlem tipleri — plan'a göre filtrele
+            _ALLOWED = {"AL", "SPOT_AL"}
+            if trade_plan in ("dengeli", "tam"):
+                _ALLOWED |= {"SHORT_AL", "SCALP_AL"}
+            if trade_plan == "tam" and lev_enabled:
+                _ALLOWED.add("LEVERAGE_AL")
+            self.pending = [s for s in self.pending if s.islem in _ALLOWED]
 
             if not self.pending:
                 self.pending_ids = []
                 log.write(
-                    "[grey58]Claude net bir AL fırsatı bulamadı (BEKLE). "
+                    "[grey58]Claude net bir fırsat bulamadı (BEKLE). "
                     "Sermayen korunuyor.[/]"
                 )
                 return
@@ -841,6 +1079,13 @@ class TradeApp(App):
             rate, n = self.tracker.win_rate(hist_prices)
 
             log.write("[bold gold3]── İŞLEM ADAYLARI ──[/]")
+            _TYPE_STYLE = {
+                "AL": ("[green3]AL[/]", "green3"),
+                "SPOT_AL": ("[green3]AL[/]", "green3"),
+                "SHORT_AL": ("[red3]SHORT[/]", "red3"),
+                "SCALP_AL": ("[cyan]SCALP[/]", "cyan"),
+                "LEVERAGE_AL": ("[bold gold3]LEV[/]", "gold3"),
+            }
             for i, s in enumerate(self.pending, 1):
                 cal = self.tracker.calibrate(s.basari_yuzdesi, hist_prices)
                 note = (
@@ -848,8 +1093,9 @@ class TradeApp(App):
                     if cal != s.basari_yuzdesi else ""
                 )
                 bar = self._success_bar(cal)
+                type_lbl, type_color = _TYPE_STYLE.get(s.islem, ("[white]AL[/]", "white"))
                 log.write(
-                    f"[bold]{i})[/] [green3]AL[/] "
+                    f"[bold]{i})[/] {type_lbl} "
                     f"[bold]{market.short_name(market.resolve_symbol(s.sembol))}[/] — "
                     f"{s.tutar_usdt:,.0f} USDT — başarı {bar} %{cal}{note}"
                 )
@@ -896,25 +1142,35 @@ class TradeApp(App):
     # ── zarar-kes / kâr-al ────────────────────────────────────────────────────
 
     def check_protections(self) -> None:
-        prices = {s: tk.price for s, tk in self.feed.tickers.items()
-                  if tk.price > 0}
-        triggers = self.portfolio.check_triggers(prices)
-        if not triggers:
-            return
-        log = self.query_one("#log", RichLog)
-        for sym, kind, price in triggers:
-            self.portfolio.sell(sym, price)
-            if kind == "stop":
-                log.write(
-                    f"[bold white on red3] ZARAR KESİLDİ [/] "
-                    f"[red3]{market.short_name(sym)} stop seviyesinden kapatıldı.[/]"
-                )
-            else:
-                log.write(
-                    f"[bold black on green3] KÂR ALINDI [/] "
-                    f"[green3]{market.short_name(sym)} hedef seviyesinden kapatıldı.[/]"
-                )
-        self.run_worker(self._sync_feed(), exclusive=False)
+        try:
+            prices = {s: tk.price for s, tk in self.feed.tickers.items()
+                      if tk.price > 0}
+            triggers = self.portfolio.check_triggers(prices)
+            if not triggers:
+                return
+            log = self.query_one("#log", RichLog)
+            for sym, kind, price in triggers:
+                result = self.portfolio.sell(sym, price)
+                if kind == "stop":
+                    log.write(
+                        f"[bold white on red3] ZARAR KESİLDİ [/] "
+                        f"[red3]{market.short_name(sym)} stop seviyesinden kapatıldı.[/]"
+                    )
+                    log.write(f"   {result}")
+                    self.notify(f"✕ {market.short_name(sym)}: ZARAR KESİLDİ", severity="warning", timeout=6)
+                else:
+                    log.write(
+                        f"[bold black on green3] KÂR ALINDI [/] "
+                        f"[green3]{market.short_name(sym)} hedef seviyesinden kapatıldı.[/]"
+                    )
+                    log.write(f"   {result}")
+                    self.notify(f"✔ {market.short_name(sym)}: KÂR ALINDI", severity="information", timeout=5)
+            self.run_worker(self._sync_feed(), exclusive=False)
+        except Exception as e:
+            try:
+                self.query_one("#log", RichLog).write(f"[red3][hata] check_protections: {e}[/]")
+            except Exception:
+                pass
 
     @work(exclusive=True, group="protect")
     async def run_protect(self, symbol: str) -> None:
@@ -991,33 +1247,59 @@ class TradeApp(App):
             )
             sym = market.resolve_symbol(s.sembol)
             price = await self._price_of(sym)
-            if s.islem == "AL":
+            if s.islem in ("AL", "SPOT_AL"):
                 cap = self.portfolio.cash * mode.max_trade_cash_ratio
                 usdt = min(s.tutar_usdt, cap)
                 if usdt < s.tutar_usdt:
                     log.write(
                         f"[dark_orange]Risk freni: {s.tutar_usdt:,.0f} → "
-                        f"{usdt:,.0f} USDT'ye düşürüldü "
-                        f"(nakitin %{mode.max_trade_cash_ratio * 100:.0f} sınırı).[/]"
+                        f"{usdt:,.0f} USDT'ye düşürüldü.[/]"
                     )
                 if usdt < 1:
-                    log.write(
-                        f"[red3]{market.short_name(sym)}: "
-                        f"yeterli nakit yok, atlandı.[/]"
-                    )
+                    log.write(f"[red3]{market.short_name(sym)}: yeterli nakit yok, atlandı.[/]")
                     continue
-                log.write(f"[green3]{self.portfolio.buy(sym, usdt, price)}[/]")
+                style = getattr(s, "trade_style", "spot") or "spot"
                 stop, target = sanitize_levels(price, s.zarar_kes, s.kar_al)
-                self.portfolio.set_protection(sym, stop, target)
+                log.write(f"[green3]{self.portfolio.buy(sym, usdt, price, trade_style=style, stop=stop, target=target)}[/]")
                 log.write(
                     f"[grey58]   Koruma: stop {fmt_price(stop)} / "
-                    f"hedef {fmt_price(target)} (otomatik kapanır)[/]"
+                    f"hedef {fmt_price(target)}[/]"
                 )
+            elif s.islem == "SHORT_AL":
+                cap = self.portfolio.cash * mode.max_trade_cash_ratio
+                usdt = min(s.tutar_usdt, cap)
+                if usdt < 1:
+                    log.write(f"[red3]{market.short_name(sym)}: yeterli nakit yok, atlandı.[/]")
+                    continue
+                allowed, reason = market.trade_allowed(sym)
+                if not allowed:
+                    log.write(f"[red3]SHORT engellendi: {reason}[/]")
+                    continue
+                log.write(f"[red3]{self.portfolio.buy_short(sym, usdt, price, s.zarar_kes or price*1.03, s.kar_al or price*0.95)}[/]")
+            elif s.islem == "SCALP_AL":
+                cap = self.portfolio.cash * mode.max_trade_cash_ratio
+                usdt = min(s.tutar_usdt, cap)
+                if usdt < 1:
+                    log.write(f"[red3]{market.short_name(sym)}: yeterli nakit yok, atlandı.[/]")
+                    continue
+                allowed, reason = market.trade_allowed(sym)
+                if not allowed:
+                    log.write(f"[red3]SCALP engellendi: {reason}[/]")
+                    continue
+                stop, target = s.zarar_kes or price*0.99, s.kar_al or price*1.015
+                log.write(f"[cyan]{self.portfolio.buy(sym, usdt, price, trade_style='scalp', stop=stop, target=target)}[/]")
+                log.write(f"[grey58]   Scalp: max 30dk, stop {fmt_price(stop)} / hedef {fmt_price(target)}[/]")
+            elif s.islem == "LEVERAGE_AL":
+                cap = self.portfolio.cash * mode.max_trade_cash_ratio
+                usdt = min(s.tutar_usdt, cap)
+                lev = getattr(s, "leverage", 2) or 2
+                if usdt < 1:
+                    log.write(f"[red3]{market.short_name(sym)}: yeterli nakit yok, atlandı.[/]")
+                    continue
+                log.write(f"[gold3]{self.portfolio.buy_leveraged(sym, usdt, lev, price, s.zarar_kes or price*0.95, s.kar_al or price*1.10)}[/]")
             else:
                 usdt = s.tutar_usdt if s.tutar_usdt > 0 else None
-                log.write(
-                    f"[dark_orange]{self.portfolio.sell(sym, price, usdt)}[/]"
-                )
+                log.write(f"[dark_orange]{self.portfolio.sell(sym, price, usdt)}[/]")
             if rec_id:
                 applied_ids.append(rec_id)
         self.tracker.set_status(applied_ids, "approved")

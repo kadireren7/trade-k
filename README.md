@@ -1,136 +1,230 @@
 # trade-k
 
-Claude destekli paper trading (sanal para) terminali. Gerçek piyasa fiyatları,
-sanal 10.000 USDT bakiye, Claude Code aboneliğin üzerinden piyasa analizi.
+Claude destekli paper trading terminali. Gerçek piyasa fiyatları, sanal 10.000 USDT
+bakiye, Claude Code aboneliği üzerinden AI piyasa analizi.
 
-## Başlat
+> **Güvenlik:** Gerçek emir gönderimi `REAL_ORDER_DISABLED` ile kalıcı olarak devre dışıdır.
+> API key bağlı olsa bile tüm işlemler PAPER/simülasyon olarak kalır.
+
+---
+
+## Başlangıç
 
 ```bash
 ./basla.sh
 ```
 
-İlk açılışta kurulum sihirbazı çalışır: **dil → isim → şifre → mod → model**.
-Sonraki her açılışta şifre sorulur; 3 yanlış denemede uygulama açılmaz.
-Ayarlar `config.json`'da saklanır (şifre PBKDF2 ile özetlenir, düz metin tutulmaz).
-Şifreni unutursan `config.json`'u silip kurulumu baştan yap.
+İlk açılışta kurulum sihirbazı: **dil → isim → şifre → model**.
+Sonraki her açılışta şifre sorulur; 3 yanlış denemede uygulama kapanır.
+Ayarlar `config.json`'da saklanır (şifre PBKDF2-SHA256 ile özetlenir, düz metin yoktur).
+Şifreni unutursan `config.json`'u sil ve kurulumu baştan yap.
 
-## Trade modları
+---
 
-| Mod | Risk | Tek işlem (prompt) | Kod freni | Toplam öneri |
-|---|---|---|---|---|
-| 🎯 **SNIPER** | Düşük | %5-10 | nakitin %10'u | ≤ %30 |
-| ⚡ **BLITZ** | Orta (varsayılan) | %5-15 | nakitin %20'si | ≤ %50 |
-| 🔥 **INFERNO** | Yüksek risk / yüksek kazanç | %10-25 | nakitin %35'i | ≤ %75 |
+## Özellikler
 
-`/mod` ile listele, `/mod inferno` ile değiştir. Mod hem Claude'a verilen risk
-kurallarını hem kod tarafındaki freni değiştirir. Başarı yüzdesi tavanı (%80)
-hiçbir modda gevşemez.
-
-## Claude modeli seçimi
-
-`/model` ile listele, `/model opus` ile değiştir:
-
-| Anahtar | Model | Ne zaman |
+| Özellik | Durum | Notlar |
 |---|---|---|
-| `opus` | Claude Opus 4.8 | En güçlü analiz, daha yavaş |
-| `sonnet` | Claude Sonnet 4.6 | Hız/zekâ dengesi (önerilen, varsayılan) |
-| `haiku` | Claude Haiku 4.5 | En hızlı, hafif analizler |
-| `varsayilan` | — | Claude CLI'ın kendi varsayılanı |
+| Paper trading (spot long) | ✅ | Stop/target otomatik belirleme |
+| Paper short | ✅ | Isolated margin simülasyonu |
+| Paper scalp | ✅ | Max 30dk, fee + slippage dahil |
+| Paper kaldıraç | ✅ | Max 5x, likidasyon simülasyonu |
+| Otonom mod (Claude AI) | ✅ | PAPER only, 3 risk profili |
+| Binance realtime fiyat | ✅ | WebSocket, key gerekmez |
+| Yahoo Finance (gecikmeli) | ✅ | ~15dk gecikme, global piyasalar |
+| Altın fiyatı | ✅ | goldprice.org near-realtime |
+| Komut paleti (`/` + Tab) | ✅ | Fuzzy match, TR/EN |
+| İki dil | ✅ | Türkçe / English |
+| Gerçek emir gönderimi | ❌ | Kalıcı olarak devre dışı |
 
-Hepsi Claude Code aboneliğinden düşer, ayrı API key gerekmez.
+---
 
-## Gerçek para bağlantısı (`/canli`)
+## Komut Referansı
 
-`/canli` komutu gereksinimleri adım adım gösterir: Binance hesabı (KYC) →
-API Management'tan anahtar oluştur (**sadece "Enable Reading"**, Withdrawals ASLA) →
-`/canli bagla API_KEY SECRET`. Anahtar imzalı istekle doğrulanır ve `config.json`'a
-kaydedilir; `/canli bakiye` gerçek spot bakiyeni gösterir, `/canli kes` bağlantıyı koparır.
-
-> Emirler şimdilik **her zaman PAPER** hesabında çalışır — gerçek emir gönderimi,
-> paper'da kanıtlanmış performanstan sonraki adımdır. Üst barda `LIVE✓` rozeti
-> sadece bağlantının doğrulandığını gösterir.
-
-## Komutlar
+### Türkçe komutlar
 
 | Komut | Açıklama |
 |---|---|
-| `/tara` | Claude tüm piyasayı tarar (kripto + altın/forex/endeks), 2-4 işlem adayı listeler |
-| `/onayla 1 3` | Listeden seçtiğin adayları uygula (`/onayla hepsi` de olur) |
-| `/reddet` | Bekleyen önerileri temizle |
-| `/ai altin` | Tek enstrüman detaylı analizi |
-| `/al btc 500` | Manuel alım — Claude stop/hedefi arkada otomatik belirler |
-| `/sat btc` | Pozisyonun tamamını sat (`/sat btc 200` kısmi) |
-| `/koru btc` | Claude açık pozisyonun stop/hedefini (yeniden) belirlesin |
-| `/ekle doge` | Kripto watchlist'e ekle (en fazla 5) |
-| `/cikar xrp` | Watchlist'ten çıkar |
-| `/mod [isim]` | Trade modu listele / değiştir (sniper, blitz, inferno) |
-| `/model [isim]` | Claude modeli listele / değiştir (opus, sonnet, haiku) |
-| `/canli ...` | Gerçek para bağlantısı: durum, `bagla KEY SECRET`, `bakiye`, `kes` |
-| `/performans` | Claude'un öneri karnesi: isabet oranı, kazanan/kaybeden, sanal PnL |
-| `/gecmis` | Son 10 işlem + son 10 öneri (tablo) |
-| `/sifirla` | Hesabı 10.000 USDT'ye sıfırla (öneri geçmişi saklanır) |
+| `/tara` | Claude piyasa analizi — 2-4 işlem adayı |
+| `/al SEMBOL [miktar]` | Paper long aç |
+| `/sat SEMBOL` | Paper pozisyon kapat |
+| `/short SEMBOL [miktar]` | Paper short aç |
+| `/scalp SEMBOL [miktar]` | Paper scalp (max 30dk) |
+| `/onayla 1 3` veya `/onayla hepsi` | Bekleyen önerileri uygula |
+| `/reddet` | Bekleyen önerileri iptal et |
+| `/koru SEMBOL` | Claude stop/hedefi yeniden belirlesin |
+| `/durum` | Açık pozisyonlar |
+| `/sonuc` | Kapalı işlem geçmişi |
+| `/rapor` | Performans özeti |
+| `/bakiye` | Paper bakiye ve özsermaye |
+| `/mod [isim]` | Risk modunu listele / değiştir |
+| `/model [isim]` | Claude modelini listele / değiştir |
+| `/ekle SEMBOL` | Kripto watchlist'e ekle |
+| `/cikar SEMBOL` | Watchlist'ten çıkar |
+| `/ayarlar` | Ayarlar menüsü |
+| `/canli` | Binance API bağlantısı |
+| `/otonomu` | Otonom mod menüsü |
+| `/guvenlik` | Güvenlik durumu |
+| `/yardim` | Komut listesi |
 | `q` | Çıkış |
 
-## Enstrümanlar
+### English commands
 
-Piyasa paneli iki bölümdür (enstrümanlar uluslararası/gerçek adlarıyla gösterilir):
-- **KRİPTO** (watchlist, düzenlenebilir, en fazla 5): btc, eth, sol, doge... (tüm Binance USDT pariteleri)
-- **GLOBAL** (her zaman görünür): GOLD (XAU), SILVER (XAG), WTI CRUDE, NATURAL GAS,
-  COPPER, EUR/USD, GBP/USD, USD/JPY, USD/TRY, S&P 500, NASDAQ 100, DOW JONES, DAX 40, BIST 100
+Tüm komutların İngilizce karşılığı mevcuttur:
+`/scan`, `/buy`, `/sell`, `/short`, `/scalp`, `/approve`, `/reject`, `/protect`,
+`/status`, `/history`, `/report`, `/balance`, `/mode`, `/model`, `/add`, `/remove`,
+`/settings`, `/live`, `/autonomous`, `/safety`, `/help`
 
-Komutlarda Türkçe ad da yeterli: `/ai altin`, `/al gumus 300`, `/koru dogalgaz`, `/ai bakir`.
+`/` yazıp Tab'a basınca komut paleti açılır; yukarı/aşağı ok ve Tab ile seçim yapılır.
 
-## Otomatik kapatma (zarar-kes / kâr-al)
+---
 
-Her açılan pozisyona Claude piyasa yapısına ve bakiyeye göre **stop** (zarar-kes) ve
-**hedef** (kâr-al) fiyatı belirler; uygulama fiyatı 2 saniyede bir kontrol eder ve
-seviye gelince pozisyonu **otomatik kapatır** (ZARAR KESİLDİ / KÂR ALINDI).
+## Trade Risk Modları
 
-- `/onayla` ile açılan işlemler: stop/hedef Claude'un önerisinden gelir.
-- `/al` ile manuel açılan işlemler: Claude arkada koruma seviyesi belirler.
-- `/koru SEMBOL`: mevcut pozisyonun seviyelerini Claude'a yeniden belirletir.
-- Kod tarafı doğrulama: stop girişin %0.1-20 altında, hedef %0.1-60 üstünde olmalı;
-  Claude saçmalarsa güvenli varsayılana (%5 stop / %10 hedef) çekilir.
+| Mod | Tek işlem | Kod freni | Toplam öneri |
+|---|---|---|---|
+| `sniper` | %5-10 | Nakitin %10'u | ≤ %30 |
+| `standart` / `blitz` | %5-15 | Nakitin %20'si | ≤ %50 |
+| `inferno` | %10-25 | Nakitin %35'i | ≤ %75 |
 
-## Profesyonel trader profili
+Başarı yüzdesi tavanı (%80) hiçbir modda gevşemez.
+`/mod inferno` ile değiştir, `/mod` ile listele.
 
-Claude'a kurumsal trader personası ve manipülasyon kontrol listesi gömülüdür:
-sahte kırılım (hacim teyitsiz kırılıma girmez), stop avı (stopları kalabalığın
-stop bölgesinin ötesine koyar), pump&dump (günlük +%15 üzeri FOMO alımı önermez),
-düşük likidite ve tek-mum/haber tuzakları. İlke: "fırsatı kaçırmak para
-kaybetmekten iyidir."
+---
 
-## Risk koruması (iki katman)
+## Otonom Mod
 
-1. **Claude tarafı:** önerilerin toplamı ve tek işlem oranı aktif moda göre sınırlanır
-   (yukarıdaki tabloya bak), başarı yüzdesi temkinli tahmin edilir (%80 üstü her modda yasak),
-   zorlama işlem üretilmez.
-2. **Kod tarafı:** Claude ne önerirse önersin tek işlem, aktif modun kod frenini
-   (%10 / %20 / %35) geçemez — aşan tutar otomatik düşürülür.
+Claude AI piyasayı periyodik olarak tarar ve PAPER işlem açıp kapatır.
 
-Not: Bu spot paper trading'dir, kaldıraç yok → liquidation (liq) riski zaten yoktur.
-Buradaki kurallar bakiyenin dengeli ve çeşitlendirilmiş kalması içindir.
+**Başlatma:** `/otonomu` → **Otonom Modu Başlat** → 4 adımlı kurulum sihirbazı:
+1. Güvenlik uyarısı onayı (REAL_ORDER_DISABLED teyidi)
+2. Risk profili seçimi
+3. Özellik seçimi (scalp paper, kaldıraç paper)
+4. Özet onayı → terminal ekranına geçiş
 
-## Performans takibi
+### Risk Profilleri
 
-Her `/tara` ve `/ai` önerisi giriş fiyatıyla `recommendations.json`'a kaydedilir
-(durum: bekliyor → onaylandı / reddedildi / süresi doldu). `/performans` bu kayıtları
-güncel fiyata göre değerlendirir: AL önerisinden sonra fiyat yükseldiyse kazanan,
-düştüyse kaybeden (SAT için tersi).
+| Profil | Max Poz | Max/Gün | Zarar Serisi Kilidi | Günlük Kayıp Kilidi |
+|---|---|---|---|---|
+| `güvenli` | 1 | 3 | 2 ard. zarar | %1 |
+| `dengeli` | 2 | 6 | 3 ard. zarar | %2 |
+| `agresif` | 3 | 10 | 4 ard. zarar | %3 |
 
-Geçmişte en az 5 değerlendirilmiş öneri biriktiğinde, `/tara` çıktısındaki başarı
-yüzdeleri Claude'un gerçek isabet oranıyla harmanlanarak **aşağı yönlü** kalibre
-edilir — geçmiş kötüyse yüzde düşer, geçmiş iyi olsa bile yüzde asla yukarı çekilmez.
+Kaldıraç sınırı: güvenli=2x, dengeli=3x, agresif=5x.
+
+---
+
+## Claude Modelleri
+
+| Anahtar | Model | Kullanım |
+|---|---|---|
+| `opus` | Claude Opus 4.8 | En güçlü analiz, daha yavaş |
+| `sonnet` | Claude Sonnet 4.6 | Hız/zekâ dengesi — önerilen (varsayılan) |
+| `haiku` | Claude Haiku 4.5 | En hızlı, hafif analizler |
+| `varsayilan` | CLI varsayılanı | Claude CLI'ın kendi seçimi |
+
+Hepsi Claude Code aboneliğinden düşer; ayrı API key gerekmez.
+
+---
+
+## Veri Kaynakları
+
+| Sembol | Kaynak | Gecikme | Kaldıraç |
+|---|---|---|---|
+| BTC, ETH ve kripto | Binance WebSocket | Gerçek zamanlı | ✅ |
+| Altın (XAU/USD) | goldprice.org | ~1dk | ❌ |
+| Hisse, ETF, döviz, emtia | Yahoo Finance | ~15dk | ❌ |
+
+Kaldıraçlı paper işlem yalnızca gerçek zamanlı Binance verisi olan sembollerde açılır.
+Market tablosunda RT/NRT/DLY (realtime/near-realtime/delayed) ve L✓/L✗ (kaldıraç
+uygunluğu) göstergeleri vardır.
+
+---
+
+## Otomatik Kapatma (Stop / Target)
+
+Her pozisyona Claude piyasa yapısına göre stop ve hedef fiyatı belirler.
+Uygulama fiyatı 2 saniyede bir kontrol eder, seviye gelince otomatik kapatır.
+
+- `Kod doğrulaması:` stop %0.1-20 aşağıda, hedef %0.1-60 yukarıda olmalı
+- Claude geçersiz değer önerirse güvenli varsayılana (%5 stop / %10 hedef) çekilir
+
+---
+
+## Kurulum
+
+### Gereksinimler
+
+- Python 3.11+
+- Claude Code CLI (terminalde `claude` komutuna erişilebilir olmalı)
+- İnternet bağlantısı
+
+### Kurulum adımları
+
+```bash
+git clone <repo-url>
+cd trade-k
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+./basla.sh
+```
+
+---
 
 ## Testler
 
 ```bash
-.venv/bin/python -m pytest tests/
+pytest tests/ -v
+# veya
+.venv/bin/python -m pytest tests/ -v
 ```
 
-## Nasıl çalışır
+| Test dosyası | Kapsam |
+|---|---|
+| `tests/test_login.py` | Kurulum ve giriş sihirbazı (3 test) |
+| `tests/test_trade_types.py` | Spot, short, scalp mantığı (15 test) |
+| `tests/test_leverage.py` | Kaldıraç, likidasyon, pozisyon büyüklüğü (35 test) |
+| `tests/test_commands.py` | Komut kayıt defteri, fuzzy match (21 test) |
+| `tests/test_menu.py` | Menü sistemi, ekran geçişleri (18 test) |
 
-- **Kripto fiyatları:** Binance public websocket (`data-stream.binance.vision`) — anlık, key gerekmez.
-- **Altın/forex/endeks:** Yahoo Finance public API — ~5 sn'de bir yenilenir.
-- **Claude:** `claude-agent-sdk` yerel `claude` CLI'ını kullanır → Claude Code aboneliğinden düşer.
-- **Hesap:** `account.json`, **watchlist:** `watchlist.json` — kalıcıdır.
+---
+
+## Dosya Yapısı
+
+```
+trade-k/
+├── app.py            — Ana TUI uygulaması, komut işleme, AccountBar
+├── app.tcss          — Textual CSS stilleri
+├── screens.py        — Ekranlar (kurulum, menü, ayarlar, otonom sihirbazı)
+├── commands.py       — Komut kayıt defteri ve palette mantığı
+├── autonomous.py     — Otonom trading motoru (PAPER only, güvenlik kilidi)
+├── portfolio.py      — Pozisyon ve paper hesap yönetimi
+├── ai.py             — Claude AI entegrasyonu
+├── config.py         — Yapılandırma ve PBKDF2 şifre yönetimi
+├── i18n.py           — TR/EN çeviri
+├── basla.sh          — Başlatma betiği
+├── config.json       — Kullanıcı ayarları (otomatik, git'e ekleme!)
+├── account.json      — Paper bakiye (otomatik)
+└── tests/            — Pytest test dosyaları
+```
+
+---
+
+## Güvenlik Notları
+
+- `config.json` dosyasını asla paylaşma — Binance API key ve şifre özeti içerir
+- Binance API key sadece okuma için kullanılır; trading / withdraw izni **açma**
+- Binance secret ekranda `***` olarak gösterilir, hiçbir log dosyasına yazılmaz
+- `REAL_ORDER_DISABLED` katmanı: `create_order`, `futures_create_order`, `margin_borrow`,
+  `withdraw` çağrıları `RuntimeError("REAL_ORDER_DISABLED")` fırlatır
+- Bu davranış arayüzden değiştirilemez; `/guvenlik` komutuyla durumu doğrulayabilirsin
+
+---
+
+## Geliştirici Notu
+
+TCSS renk değerleri: yalnızca `#rrggbb`, `rgb(r,g,b)` veya standart CSS renk isimleri kullan.
+`grey85`, `grey42` gibi Rich markup renk isimleri TCSS'de **geçersizdir** ve CSS parse hatasına yol açar.
+
+Yeni komut eklemek için `commands.py` içindeki `REGISTRY` listesini güncelle.

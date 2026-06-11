@@ -39,6 +39,13 @@ Screen {
     background: #0d1117;
 }
 
+#pending-hint {
+    height: 1;
+    background: #0d1117;
+    color: #e3b341;
+    padding: 0 1;
+}
+
 DataTable {
     background: #0d1117;
 }
@@ -69,7 +76,7 @@ DataTable > .datatable--header {
 }
 
 /* ---- kurulum & giriş ekranları ---- */
-SetupScreen, LoginScreen {
+SetupScreen, LoginScreen, AutonomousSetupScreen {
     background: #0d1117;
 }
 
@@ -106,4 +113,131 @@ SetupScreen, LoginScreen {
 
 #authinput:focus {
     border: tall #e3b341;
+}
+
+/* ─── Menu system screens ─── */
+SplashMenuScreen, SettingsScreen, RiskLimitsScreen,
+AutonomousControlScreen, ConnectionsScreen, MarketDataScreen,
+ReportsScreen, SafetyStatusScreen, AutoLogsScreen,
+WatchlistScreen, DataSourceStatusScreen, InstrumentDetailScreen,
+PerformanceScreen, TradeHistoryScreen, RecommendationsScreen,
+ConfirmScreen {
+    background: #0d1117;
+}
+
+#splash-box, #settings-box, #risk-box, #auto-box,
+#conn-box, #market-box, #rep-box, #logs-box,
+#safety-box, #wl-box, #ds-box, #detail-box,
+#perf-box, #hist-box, #recs-box {
+    width: auto;
+    min-width: 68;
+    padding: 1 2;
+    background: #161b22;
+    border: round #e3b341;
+}
+
+#splash-logo {
+    color: #e3b341;
+    text-style: bold;
+    text-align: center;
+    padding: 0 0 1 0;
+}
+
+#splash-chips {
+    text-align: center;
+    padding: 0 0 1 0;
+}
+
+#splash-welcome {
+    color: #d9d9d9;
+    padding: 0 0 1 0;
+}
+
+#splash-hint, #settings-hint, #risk-hint, #auto-hint,
+#conn-hint, #market-hint, #rep-hint, #logs-hint,
+#safety-hint, #wl-hint, #ds-hint, #detail-hint,
+#perf-hint, #hist-hint, #recs-hint, #wl-add-hint {
+    color: #6b6b6b;
+    padding: 1 0 0 0;
+    text-align: center;
+}
+
+#settings-title, #risk-title, #auto-title,
+#conn-title, #market-title, #rep-title, #logs-title,
+#safety-title, #wl-title, #ds-title, #detail-title,
+#splash-hint, #perf-title, #hist-title, #recs-title {
+    color: #e3b341;
+    text-style: bold;
+    text-align: center;
+    padding: 0 0 1 0;
+}
+
+#settings-msg, #risk-msg, #auto-msg,
+#conn-msg, #rep-msg {
+    color: green;
+    text-style: bold;
+    min-height: 1;
+    padding: 0 0 0 0;
+}
+
+#auto-status, #conn-detail, #safety-content,
+#wl-content, #detail-content, #perf-content {
+    color: #d9d9d9;
+    padding: 0 0 1 0;
+    min-height: 2;
+}
+
+ListView {
+    width: 66;
+    min-height: 4;
+    border: round #30363d;
+    background: #161b22;
+}
+
+ListItem {
+    padding: 0 1;
+    color: #d9d9d9;
+    background: #161b22;
+}
+
+ListItem.--highlight {
+    background: #2d2009;
+    color: #e3b341;
+    text-style: bold;
+}
+
+ListItem > Label {
+    padding: 0 1;
+}
+
+#risk-input, #conn-input, #market-input {
+    width: 66;
+    background: #161b22;
+    border: tall #e3b341;
+    color: white;
+    margin-top: 0;
+}
+
+.hidden {
+    display: none;
+}
+
+#logs-scroll, #hist-scroll, #recs-scroll, #ds-scroll {
+    width: 66;
+    height: 18;
+    border: round #30363d;
+}
+
+#logs-content, #hist-content, #recs-content, #ds-content {
+    color: #d9d9d9;
+}
+
+/* ─── Command Palette ─── */
+#palette {
+    background: #1a1a2e;
+    border: round #e3b341;
+    height: auto;
+    max-height: 12;
+    padding: 0 1;
+    color: white;
 }

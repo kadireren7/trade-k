@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass, field
 
 import httpx
@@ -48,12 +49,118 @@ DISPLAY = {
 }
 
 
+# ── Veri kalitesi ve kaldıraç izin tablosu ────────────────────────────────────
+_LEVERAGE_DATA: dict[str, tuple[str, bool, str]] = {
+    "GC=F":      ("near_realtime", False,
+                  "goldprice.org ~dakikalık güncelleme — tick-by-tick değil"),
+    "SI=F":      ("near_realtime", False,
+                  "goldprice.org ~dakikalık güncelleme — tick-by-tick değil"),
+    "CL=F":      ("delayed",       False,
+                  "Yahoo Finance ~15dk gecikmeli — kaldıraç stop hesabı güvensiz"),
+    "NG=F":      ("delayed",       False,
+                  "Yahoo Finance ~15dk gecikmeli — kaldıraç stop hesabı güvensiz"),
+    "HG=F":      ("delayed",       False,
+                  "Yahoo Finance ~15dk gecikmeli — kaldıraç stop hesabı güvensiz"),
+    "EURUSD=X":  ("delayed",       False,
+                  "Yahoo Finance forex gecikmeli — kaldıraç için anlık veri şart"),
+    "GBPUSD=X":  ("delayed",       False,
+                  "Yahoo Finance forex gecikmeli — kaldıraç için anlık veri şart"),
+    "USDJPY=X":  ("delayed",       False,
+                  "Yahoo Finance forex gecikmeli — kaldıraç için anlık veri şart"),
+    "USDTRY=X":  ("delayed",       False,
+                  "Yahoo Finance forex gecikmeli — kaldıraç için anlık veri şart"),
+    "^GSPC":     ("delayed",       False,
+                  "Yahoo Finance endeks gecikmeli — kaldıraç için anlık veri şart"),
+    "NQ=F":      ("delayed",       False,
+                  "Yahoo Finance endeks gecikmeli — kaldıraç için anlık veri şart"),
+    "^DJI":      ("delayed",       False,
+                  "Yahoo Finance endeks gecikmeli — kaldıraç için anlık veri şart"),
+    "^GDAXI":    ("delayed",       False,
+                  "Yahoo Finance endeks gecikmeli — kaldıraç için anlık veri şart"),
+    "XU100.IS":  ("delayed",       False,
+                  "BIST verisi Yahoo üzerinden gecikmeli/belirsiz"),
+}
+
+_QUALITY_LABELS: dict[str, str] = {
+    "realtime":      "Anlık (Binance WebSocket)",
+    "near_realtime": "Yakın-anlık (~1dk güncelleme)",
+    "delayed":       "Gecikmeli (~15dk, Yahoo Finance)",
+    "unknown":       "Bilinmiyor",
+}
+
+
+def data_quality(symbol: str) -> str:
+    """Sembolün veri kalite seviyesini döndür."""
+    if not is_yahoo(symbol):
+        return "realtime"
+    return _LEVERAGE_DATA.get(symbol, ("unknown", False, ""))[0]
+
+
+def leverage_allowed(symbol: str) -> bool:
+    """Sembolün kaldıraçlı paper işlem için uygun olup olmadığını döndür."""
+    if not is_yahoo(symbol):
+        return True
+    return _LEVERAGE_DATA.get(symbol, ("unknown", False, ""))[1]
+
+
+def leverage_reason(symbol: str) -> str:
+    """Kaldıraç izninin gerekçesini döndür."""
+    if not is_yahoo(symbol):
+        return "Binance WebSocket anlık veri — kaldıraçlı paper işlem için uygun"
+    info = _LEVERAGE_DATA.get(symbol)
+    if info:
+        izin = "izinli" if info[1] else "izinsiz"
+        return f"{info[2]} ({izin})"
+    return "Bilinmeyen kaynak — kaldıraç izinsiz (güvenli varsayılan)"
+
+
+def data_quality_label(symbol: str) -> str:
+    """Okunabilir veri kalite etiketi döndür."""
+    return _QUALITY_LABELS.get(data_quality(symbol), "Bilinmiyor")
+
+
+def leverage_eligible_symbols(watchlist: list[str]) -> list[str]:
+    """Watchlist'ten sadece kaldıraçlı paper işleme uygun sembolleri filtrele."""
+    return [s for s in watchlist if leverage_allowed(s)]
+
+
+def trade_allowed(symbol: str) -> tuple[bool, str]:
+    """Returns (allowed, reason). Blocks scalp/short on delayed data."""
+    q = data_quality(symbol)
+    if q in ("realtime", "near_realtime"):
+        return True, ""
+    if q == "delayed":
+        return False, f"{short_name(symbol)} veri gecikmeli (~15dk, Yahoo Finance) — scalp/short için anlık veri şart"
+    return False, f"{short_name(symbol)} veri kalitesi bilinmiyor — işlem için güvenli değil"
+
+
 def is_yahoo(symbol: str) -> bool:
     return any(c in symbol for c in "=^.")
 
 
 def resolve_symbol(name: str) -> str:
     name = name.upper().strip().lstrip("/")
+    _COMMON_NAMES = {
+        "BITCOIN": "BTCUSDT", "BTC": "BTCUSDT",
+        "ETHEREUM": "ETHUSDT", "ETH": "ETHUSDT",
+        "SOLANA": "SOLUSDT", "SOL": "SOLUSDT",
+        "DOGECOIN": "DOGEUSDT", "DOGE": "DOGEUSDT",
+        "RIPPLE": "XRPUSDT", "XRP": "XRPUSDT",
+        "CARDANO": "ADAUSDT", "ADA": "ADAUSDT",
+        "AVALANCHE": "AVAXUSDT", "AVAX": "AVAXUSDT",
+        "CHAINLINK": "LINKUSDT", "LINK": "LINKUSDT",
+        "POLKADOT": "DOTUSDT", "DOT": "DOTUSDT",
+        "MATIC": "MATICUSDT", "POLYGON": "MATICUSDT",
+        "UNI": "UNIUSDT", "UNISWAP": "UNIUSDT",
+        "LITECOIN": "LTCUSDT", "LTC": "LTCUSDT",
+        "NEAR": "NEARUSDT",
+        "APT": "APTUSDT", "APTOS": "APTUSDT",
+        "SUI": "SUIUSDT",
+        "INJ": "INJUSDT", "INJECTIVE": "INJUSDT",
+        "TRX": "TRXUSDT", "TRON": "TRXUSDT",
+    }
+    if name in _COMMON_NAMES:
+        return _COMMON_NAMES[name]
     if is_yahoo(name):
         return name
     if name in YAHOO_ALIASES:
@@ -80,6 +187,7 @@ class Ticker:
     high: float = 0.0
     low: float = 0.0
     prev_price: float = 0.0  # tick yönü için
+    last_updated: float = 0.0  # unix timestamp, fiyat yaşı için
 
 
 async def _yahoo_quote(client: httpx.AsyncClient, ysym: str) -> Ticker:
@@ -95,6 +203,7 @@ async def _yahoo_quote(client: httpx.AsyncClient, ysym: str) -> Ticker:
         change_pct=(price - prev) / prev * 100 if prev else 0.0,
         high=float(meta.get("regularMarketDayHigh") or price),
         low=float(meta.get("regularMarketDayLow") or price),
+        last_updated=time.time(),
     )
 
 
@@ -103,6 +212,7 @@ class MarketFeed:
     """Watchlist için canlı veri: kripto websocket + Yahoo polling."""
     symbols: list[str]
     tickers: dict[str, Ticker] = field(default_factory=dict)
+    ws_connected: bool = False
     _ws_task: asyncio.Task | None = None
     _poll_task: asyncio.Task | None = None
 
@@ -152,6 +262,7 @@ class MarketFeed:
                 change_pct=float(t["priceChangePercent"]),
                 high=float(t["highPrice"]),
                 low=float(t["lowPrice"]),
+                last_updated=time.time(),
             )
 
     async def _prime_yahoo(self, client: httpx.AsyncClient, ysym: str) -> None:
@@ -166,6 +277,7 @@ class MarketFeed:
         while True:
             try:
                 async with websockets.connect(url, ping_interval=20) as ws:
+                    self.ws_connected = True
                     async for raw in ws:
                         d = json.loads(raw).get("data", {})
                         sym = d.get("s")
@@ -181,10 +293,12 @@ class MarketFeed:
                             high=float(d["h"]),
                             low=float(d["l"]),
                             prev_price=prev.price if prev else price,
+                            last_updated=time.time(),
                         )
             except asyncio.CancelledError:
                 return
             except Exception:
+                self.ws_connected = False
                 await asyncio.sleep(3)  # kopunca yeniden bağlan
 
     async def _yahoo_loop(self) -> None:
