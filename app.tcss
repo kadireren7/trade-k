@@ -1,0 +1,109 @@
+Screen {
+    background: #0d1117;
+}
+
+#account {
+    height: 1;
+    background: #161b22;
+    color: white;
+    padding: 0 1;
+}
+
+#main {
+    height: 1fr;
+}
+
+#left {
+    width: 58%;
+    border-right: solid #30363d;
+}
+
+#right {
+    width: 42%;
+}
+
+.paneltitle {
+    height: 1;
+    background: #1f2937;
+    color: #e3b341;
+    text-style: bold;
+}
+
+#watch {
+    height: 22;
+    background: #0d1117;
+}
+
+#positions {
+    height: 1fr;
+    background: #0d1117;
+}
+
+DataTable {
+    background: #0d1117;
+}
+
+DataTable > .datatable--header {
+    background: #161b22;
+    color: #8b949e;
+    text-style: bold;
+}
+
+#log {
+    height: 1fr;
+    background: #0d1117;
+    border: none;
+    padding: 0 1;
+}
+
+#cmd {
+    dock: bottom;
+    height: 3;
+    border: tall #e3b341;
+    background: #161b22;
+    color: white;
+}
+
+#cmd:focus {
+    border: tall #f0c649;
+}
+
+/* ---- kurulum & giriş ekranları ---- */
+SetupScreen, LoginScreen {
+    background: #0d1117;
+}
+
+#authbox {
+    width: 72;
+    height: auto;
+    background: #161b22;
+    border: tall #e3b341;
+    padding: 1 2;
+}
+
+#authtitle {
+    text-style: bold;
+    color: #e3b341;
+    margin-bottom: 1;
+}
+
+#authbody {
+    color: #c9d1d9;
+    height: auto;
+}
+
+#autherr {
+    color: #f85149;
+    height: auto;
+}
+
+#authinput {
+    margin-top: 1;
+    background: #0d1117;
+    border: tall #30363d;
+    color: white;
+}
+
+#authinput:focus {
+    border: tall #e3b341;
+}

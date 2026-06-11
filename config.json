@@ -1,0 +1,10 @@
+{
+  "language": "tr",
+  "name": "kadir",
+  "pw_salt": "5b420874d347b4c3531fd1e433c70a60",
+  "pw_hash": "a923d6a7fe4100cd91d9de794023f910b263383a6f4e36f0acb110cfdd259f6b",
+  "mode": "standart",
+  "model": "sonnet",
+  "binance_key": "",
+  "binance_secret": ""
+}

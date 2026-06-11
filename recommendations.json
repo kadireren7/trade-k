@@ -1,0 +1,68 @@
+[
+  {
+    "id": "fcf43430",
+    "timestamp": 1781132361.3609102,
+    "symbol": "GC=F",
+    "side": "AL",
+    "suggested_amount": 1000.0,
+    "confidence_percent": 60,
+    "reason": "Altında %1'lik geri çekilme, risk-off ortamda güvenli liman talebiyle kademeli alım fırsatı",
+    "entry_price": 4086.0,
+    "status": "approved"
+  },
+  {
+    "id": "8372040d",
+    "timestamp": 1781132361.3609216,
+    "symbol": "CL=F",
+    "side": "AL",
+    "suggested_amount": 700.0,
+    "confidence_percent": 55,
+    "reason": "Petrol %2.77 yükselişle genel satış dalgasına karşı pozitif ayrışıyor, momentum devam edebilir",
+    "entry_price": 92.56,
+    "status": "rejected"
+  },
+  {
+    "id": "caa5ae8f",
+    "timestamp": 1781132361.3609264,
+    "symbol": "^GSPC",
+    "side": "AL",
+    "suggested_amount": 800.0,
+    "confidence_percent": 52,
+    "reason": "S&P500'de %1.6'lık düşüş sonrası endeks bazında kademeli alım, uzun vadede toparlanma olasılığı",
+    "entry_price": 7266.99,
+    "status": "rejected"
+  },
+  {
+    "id": "c348342b",
+    "timestamp": 1781134017.7857065,
+    "symbol": "CL=F",
+    "side": "AL",
+    "suggested_amount": 1000.0,
+    "confidence_percent": 50,
+    "reason": "Risk-off günde tek güçlü momentum petrolde, stop 91 desteğinin altında yapı dışına",
+    "entry_price": 93.5,
+    "status": "rejected"
+  },
+  {
+    "id": "0abb8b5b",
+    "timestamp": 1781134017.7857137,
+    "symbol": "SOLUSDT",
+    "side": "AL",
+    "suggested_amount": 800.0,
+    "confidence_percent": 42,
+    "reason": "Yüksek hacimli geri çekilmede kademeli küçük alım, stop 60 psikolojik seviyesinin belirgin altında",
+    "entry_price": 62.95,
+    "status": "approved"
+  },
+  {
+    "id": "03241bf4",
+    "timestamp": 1781134139.7742786,
+    "symbol": "GC=F",
+    "side": "SAT",
+    "suggested_amount": 992.0,
+    "confidence_percent": 60,
+    "reason": "Metallerde toplu satış baskısı, stopa 18 USD kala erken zarar-kes ile çık",
+    "entry_price": 4051.8,
+    "status": "pending"
+  }
+]

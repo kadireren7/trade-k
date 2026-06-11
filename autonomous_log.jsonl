@@ -1,0 +1,3 @@
+{"time": "2026-06-11T03:02:26", "action": "start", "symbol": "", "decision": "AÇILDI", "reason": "Kullanıcı başlattı", "confidence": 0, "stop_loss": 0, "take_profit": 0, "risk_reward": 0, "result": ""}
+{"time": "2026-06-11T03:02:47", "action": "hold", "symbol": "SOLUSDT", "decision": "DEVAM", "reason": "Fiyat girişin hafif üzerinde, stop uzakta ve yapı bozulmamış; R/R 1.44 ideal altında ama kabul edilebilir", "confidence": 0, "stop_loss": 0, "take_profit": 0, "risk_reward": 0, "result": ""}
+{"time": "2026-06-11T03:03:50", "action": "stop", "symbol": "", "decision": "KAPATILDI", "reason": "Kullanıcı durdurdu", "confidence": 0, "stop_loss": 0, "take_profit": 0, "risk_reward": 0, "result": ""}
