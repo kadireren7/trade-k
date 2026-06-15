@@ -455,6 +455,14 @@ class TradeApp(App):
         )
         self._position_decisions = self._auto_engine.position_decisions
 
+        # Telegram komut botunu başlat (token varsa)
+        notify.get_bot().start(
+            portfolio=self.portfolio,
+            engine=self._auto_engine,
+            cfg=self.cfg,
+            feed=self.feed,
+        )
+
         # Günlük başlangıç varlığını ayarla
         self._daily_date = datetime.now().strftime("%Y-%m-%d")
         all_prices = {s: tk.price for s, tk in self.feed.tickers.items()}
