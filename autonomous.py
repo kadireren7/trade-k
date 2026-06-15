@@ -926,8 +926,6 @@ class AutonomousEngine:
             for s in candidates:
                 if not self.state.enabled:
                     break
-                if len(self.portfolio.positions) >= p.max_open_positions:
-                    break
                 if self.state.daily_trades >= p.max_daily_trades:
                     break
 
@@ -939,10 +937,15 @@ class AutonomousEngine:
                     self.log(f"[grey58][OTONOM] {market.short_name(sym)} atlandı: zaten açık pozisyon var.[/]")
                     continue
 
-                # LEVERAGE_AL adayını ayrı işle
+                # LEVERAGE_AL adayını ayrı işle — max_open_positions limitini geçer
+                # (kaldıraç kendi günlük limitine sahip: daily_leveraged_trades)
                 if s.islem == "LEVERAGE_AL":
                     await self._handle_leverage_candidate(s, sym, p)
                     continue
+
+                # Normal işlemler için pozisyon limiti kontrolü
+                if len(self.portfolio.positions) >= p.max_open_positions:
+                    break
 
                 if s.basari_yuzdesi < p.min_confidence:
                     self._log_event("skip", symbol=sym,
