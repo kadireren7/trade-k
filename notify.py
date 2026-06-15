@@ -74,23 +74,23 @@ class Notifier:
     async def validate(self, token: str, chat_id: str) -> tuple[bool, str]:
         """Token ve chat_id'yi doğrula; (başarı, mesaj) döndür."""
         url = f"{TELEGRAM_API}/bot{token}/getMe"
+        test_url = f"{TELEGRAM_API}/bot{token}/sendMessage"
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 r = await client.get(url)
-            if r.status_code != 200:
-                return False, f"Geçersiz token (HTTP {r.status_code})"
-            bot_name = r.json().get("result", {}).get("username", "?")
-            # chat_id doğrula: test mesajı gönder
-            test_url = f"{TELEGRAM_API}/bot{token}/sendMessage"
-            test_r = await client.post(test_url, json={
-                "chat_id": chat_id,
-                "text": "✅ <b>trade-k</b> bağlantısı doğrulandı!",
-                "parse_mode": "HTML",
-            })
-            if test_r.status_code != 200:
-                body = test_r.json()
-                return False, f"Chat ID hatası: {body.get('description', 'Bilinmeyen')}"
-            return True, f"Bot: @{bot_name}"
+                if r.status_code != 200:
+                    return False, f"Geçersiz token (HTTP {r.status_code})"
+                bot_name = r.json().get("result", {}).get("username", "?")
+                # chat_id doğrula — aynı client içinde
+                test_r = await client.post(test_url, json={
+                    "chat_id": chat_id,
+                    "text": "✅ <b>trade-k</b> bağlantısı doğrulandı!",
+                    "parse_mode": "HTML",
+                })
+                if test_r.status_code != 200:
+                    body = test_r.json()
+                    return False, f"Chat ID hatası: {body.get('description', 'Bilinmeyen')}"
+                return True, f"Bot: @{bot_name}"
         except httpx.ConnectError:
             return False, "Telegram'a bağlanılamadı (internet bağlantısını kontrol et)"
         except Exception as e:

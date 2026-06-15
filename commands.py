@@ -326,16 +326,31 @@ REGISTRY: list[Command] = [
         visible_in_help=True,
     ),
     Command(
+        command_tr="/bakiye",
+        command_en="/balance",
+        aliases=["/bakiye", "/balance", "/wallet"],
+        category="Diğer",
+        description_tr="Paper bakiyeyi göster / ayarla",
+        description_en="Show / set paper balance",
+        example_tr="/bakiye ayarla 100",
+        example_en="/balance set 100",
+        handler_name="bakiye",
+        tags=["bakiye", "balance", "cash", "nakit"],
+        risk_level="low",
+        visible_in_help=True,
+        sub_commands=["ayarla", "set"],
+    ),
+    Command(
         command_tr="/cikis",
         command_en="/exit",
         aliases=["/cikis", "/exit", "/quit"],
         category="Diğer",
-        description_tr="Çıkış",
-        description_en="Exit",
+        description_tr="Menüye dön",
+        description_en="Return to menu",
         example_tr="/cikis",
         example_en="/exit",
         handler_name="cikis",
-        tags=["exit", "çıkış", "quit"],
+        tags=["exit", "çıkış", "quit", "menu", "menü"],
         risk_level="low",
         visible_in_help=True,
     ),
@@ -419,6 +434,14 @@ def get_context_suggestions(context: dict) -> list[tuple[str, str, str, str]]:
             "/scan crypto" if en else "/tara kripto",
             "Analiz", "Kripto piyasasını tara", "Scan crypto market",
         ))
+
+    # Her zaman göster
+    suggestions += [
+        ("/balance" if en else "/bakiye",
+         "Diğer", "Paper bakiyeyi göster / ayarla", "Show / set paper balance"),
+        ("/exit" if en else "/cikis",
+         "Diğer", "Menüye dön", "Return to menu"),
+    ]
 
     return suggestions[:8]
 
