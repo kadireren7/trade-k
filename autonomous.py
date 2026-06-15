@@ -876,22 +876,39 @@ class AutonomousEngine:
                 suggestions = ai.parse_suggestions(result)
 
             else:
-                # longshort / tam → iki paralel yönsel tarama
-                # LONG için TA-bullish semboller, SHORT için TA-bearish semboller
-                long_wl = [s for s in watchlist if s in ta_long_syms] or (user_wl or watchlist[:15])
+                # longshort / tam → paralel yönsel taramalar
+                # LONG için TA-bullish, SHORT için TA-bearish semboller
+                long_wl  = [s for s in watchlist if s in ta_long_syms]  or (user_wl or watchlist[:15])
                 short_wl = [s for s in watchlist if s in ta_short_syms] or (user_wl or watchlist[:10])
 
-                long_res, short_res = await asyncio.gather(
-                    ai.scan_directional(long_wl, self.portfolio.cash, positions, direction="long"),
+                gather_tasks = [
+                    ai.scan_directional(long_wl,  self.portfolio.cash, positions, direction="long"),
                     ai.scan_directional(short_wl, self.portfolio.cash, positions, direction="short"),
-                )
-                s_long = ai.strip_machine_lines(long_res)
-                s_short = ai.strip_machine_lines(short_res)
-                if s_long:
-                    self.log(f"[grey58][OTONOM] LONG tarama:[/] {s_long}")
-                if s_short:
-                    self.log(f"[grey58][OTONOM] SHORT tarama:[/] {s_short}")
-                suggestions = ai.parse_suggestions(long_res) + ai.parse_suggestions(short_res)
+                ]
+                # tam modda scalp ve kaldıraç da dahil
+                if otonom_type == "tam":
+                    scalp_wl = long_wl[:8]   # en likit semboller
+                    gather_tasks.append(
+                        ai.scan_directional(scalp_wl, self.portfolio.cash, positions, direction="scalp")
+                    )
+                    if lev_enabled:
+                        gather_tasks.append(
+                            ai.scan_market_filtered(
+                                long_wl[:10], self.portfolio.cash, positions,
+                                category="kripto", leverage_enabled=True,
+                                max_leverage=p.max_leverage, trade_plan="tam",
+                            )
+                        )
+
+                results = await asyncio.gather(*gather_tasks)
+                labels  = ["LONG", "SHORT", "SCALP", "KALDIRAÇ"]
+                suggestions = []
+                for i, res in enumerate(results):
+                    lbl = labels[i] if i < len(labels) else "TARAMA"
+                    s = ai.strip_machine_lines(res)
+                    if s:
+                        self.log(f"[grey58][OTONOM] {lbl} tarama:[/] {s}")
+                    suggestions += ai.parse_suggestions(res)
 
             candidates = []
             for s in suggestions:
