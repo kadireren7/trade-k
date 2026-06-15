@@ -30,6 +30,9 @@ logs/
 data/incidents.jsonl
 report_*.txt
 
+# Claude Code iç dosyaları
+.claude/
+
 # Geçici
 *.tmp
 *.log
