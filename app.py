@@ -2492,6 +2492,7 @@ class TradeApp(App):
                 self.portfolio = self.portfolio.__class__.load()
                 if self._auto_engine:
                     self._auto_engine.portfolio = self.portfolio
+                notify.get_bot().update_portfolio(self.portfolio)
                 self.refresh_tables()
 
             # WS bağlantı durumunu state dosyasına yaz (web UI okur)

@@ -232,6 +232,19 @@ class TelegramCommandBot:
     def update_engine(self, engine) -> None:
         self._engine = engine
 
+    def update_portfolio(self, portfolio) -> None:
+        """Portfolio reload edilince çağrılır — stale referansı günceller."""
+        self._portfolio = portfolio
+
+    @property
+    def _port(self):
+        """Her zaman güncel portfolio — engine varsa ondan al."""
+        if self._engine is not None:
+            p = getattr(self._engine, "portfolio", None)
+            if p is not None:
+                return p
+        return self._portfolio
+
     def stop(self) -> None:
         if self._task and not self._task.done():
             self._task.cancel()
@@ -239,8 +252,18 @@ class TelegramCommandBot:
 
     # ── Polling döngüsü ─────────────────────────────────────────────────────
 
+    async def _delete_webhook(self) -> None:
+        """Olası webhook'u ve çakışan oturumları temizle."""
+        url = f"{TELEGRAM_API}/bot{self._n.token}/deleteWebhook"
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                await client.post(url, json={"drop_pending_updates": False})
+        except Exception:
+            pass
+
     async def _poll_loop(self) -> None:
         self._log("[grey50]📱 Telegram komut botu başladı (polling aktif)[/]")
+        await self._delete_webhook()   # 409'u önlemek için önce webhook'u sil
         await self._register_commands()
         _err_count = 0
         _conflict_logged = False
@@ -404,9 +427,9 @@ class TelegramCommandBot:
         )
 
     async def _bakiye(self) -> str:
-        if not self._portfolio:
+        if not self._port:
             return "❌ Portföy bağlı değil"
-        p = self._portfolio
+        p = self._port
         prices: dict = {}
         for sym in p.positions:
             try:
@@ -427,9 +450,9 @@ class TelegramCommandBot:
         )
 
     async def _durum(self) -> str:
-        if not self._portfolio:
+        if not self._port:
             return "❌ Portföy bağlı değil"
-        p = self._portfolio
+        p = self._port
         if not p.positions:
             return "📭 Açık pozisyon yok"
         lines = [f"📊 <b>Pozisyonlar ({len(p.positions)})</b>\n"]
@@ -475,7 +498,7 @@ class TelegramCommandBot:
             status = "🟢 AÇIK" if st.enabled else "⚫ KAPALI"
             mod = getattr(self._cfg, "otonom_trade_type", "long") if self._cfg else "?"
             profil = getattr(self._cfg, "autonomous_mode", "dengeli") if self._cfg else "?"
-            n_pos = len(self._portfolio.positions) if self._portfolio else 0
+            n_pos = len(self._port.positions) if self._port else 0
             risk_str = "🔴 AKTİF" if st.risk_locked else "✅ Yok"
 
             # Günlük zarar hesapla
@@ -484,8 +507,8 @@ class TelegramCommandBot:
                 import market as _mkt_mod
                 prices = {s: tk.price for s, tk in e.feed.tickers.items()
                           if tk.price > 0}
-                cur_eq = (self._portfolio.equity(prices)
-                          if self._portfolio and prices else 0.0)
+                cur_eq = (self._port.equity(prices)
+                          if self._port and prices else 0.0)
                 if st.daily_start_equity and cur_eq:
                     loss_pct = ((st.daily_start_equity - cur_eq)
                                 / st.daily_start_equity * 100)
@@ -511,15 +534,15 @@ class TelegramCommandBot:
 
             # Pozisyon listesi
             pos_list = ""
-            if self._portfolio and self._portfolio.positions:
+            if self._port and self._port.positions:
                 lines = []
-                for sym, pos in list(self._portfolio.positions.items())[:5]:
+                for sym, pos in list(self._port.positions.items())[:5]:
                     name = sym.replace("USDT", "")
                     side = "L" if pos.direction == "long" else "S"
                     lines.append(f"  • {name} [{side}] @ {pos.entry:,.4f}")
                 pos_list = "\n" + "\n".join(lines)
-                if len(self._portfolio.positions) > 5:
-                    pos_list += f"\n  ...ve {len(self._portfolio.positions)-5} daha"
+                if len(self._port.positions) > 5:
+                    pos_list += f"\n  ...ve {len(self._port.positions)-5} daha"
 
             last_scan_str = "—"
             if st.last_scan_time:
@@ -587,9 +610,9 @@ class TelegramCommandBot:
 
     async def _acil(self) -> str:
         """Acil kapatma: tüm pozisyonları kapat + otonom durdur."""
-        if not self._engine or not self._portfolio:
+        if not self._engine or not self._port:
             return "❌ Motor veya portföy bağlı değil"
-        if not self._portfolio.positions:
+        if not self._port.positions:
             await self._engine.stop("Acil kapatma — pozisyon yok")
             return "⏹ Otonom durduruldu. Açık pozisyon yok."
         self._log("[bold red3]📱 Telegram: /acil komutu alındı[/]")
@@ -642,9 +665,9 @@ class TelegramCommandBot:
         return msg
 
     async def _sat(self, args: list) -> str:
-        if not self._portfolio:
+        if not self._port:
             return "❌ Portföy bağlı değil"
-        p = self._portfolio
+        p = self._port
         if not args:
             if not p.positions:
                 return "📭 Açık pozisyon yok"
@@ -715,7 +738,7 @@ class TelegramCommandBot:
     async def _sifirla(self) -> str:
         if not self._engine:
             return "❌ Motor bağlı değil"
-        p = self._portfolio
+        p = self._port
         equity = p.cash if p else 100.0
         self._engine.state.risk_locked = False
         self._engine.state.consecutive_losses = 0
@@ -730,12 +753,12 @@ class TelegramCommandBot:
         )
 
     async def _performans(self) -> str:
-        if not self._portfolio:
+        if not self._port:
             return "❌ Portföy bağlı değil"
         import performance as perf_mod
         from datetime import datetime as _dt
         from pathlib import Path as _Path
-        p = self._portfolio
+        p = self._port
         h = p.history
 
         # Anlık fiyatları al
@@ -828,9 +851,9 @@ class TelegramCommandBot:
         return "🔍 Tarama otonom döngüde zaten çalışıyor. /durum ile pozisyonları gör."
 
     async def _gecmis(self) -> str:
-        if not self._portfolio:
+        if not self._port:
             return "❌ Portföy bağlı değil"
-        h = self._portfolio.history
+        h = self._port.history
         if not h:
             return "📭 Bugün henüz işlem yapılmadı"
         today = __import__("time").strftime("%Y-%m-%d")
