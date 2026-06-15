@@ -24,69 +24,126 @@ _HELP_TR = """\
   [bold]/tara[/]  [bold]/tara kripto|global|forex|emtia|endeks[/]  → Claude fırsat tarar
   [bold]/tara long|short|scalp|day|swing|kaldirac[/]  → trade tipine göre tara
   [bold]/durum[/]                        → açık pozisyonları Claude ile analiz et
-  [bold]/uygula SEMBOL[/]               → /durum kararını uygula (stop güncelle / kâr al / kes)
-  [bold]/uygula hepsi[/]               → tüm bekleyen /durum kararlarını uygula
-  [bold]/onayla 1 3[/]                  → /tara adaylarını uygula
-  [bold]/reddet[/]                      → bekleyen /tara önerilerini temizle
-  [bold]/ai SEMBOL[/]                   → tek sembol derin analiz   örn: /ai altin
-[bold cyan]İşlem (Paper)[/]
-  [bold]/al SEMBOL TUTAR[/]             → Spot Long paper alım   (stop/hedef otomatik)
-  [bold]/sat SEMBOL \\[TUTAR][/]          → Sat (tutar yoksa hepsi)
-  [bold]/short SEMBOL TUTAR[/]          → Short paper (yalnızca realtime kripto)
-  [bold]/scalp SEMBOL TUTAR[/]          → Scalp paper (max 30dk, fee/slippage dahil)
-  [bold]/koru SEMBOL[/]                 → Claude stop/hedefi yeniden belirlesin
-[bold cyan]Scalp[/]
-  [bold]/scalp ac[/]  [bold]/scalp kapat[/]  [bold]/scalp durum[/]
-[bold cyan]Kaldıraç (Paper)[/]
-  [bold]/kaldirac ac[/]  [bold]/kaldirac kapat[/]  [bold]/kaldirac durum[/]
-  [bold yellow3]⚠ Yalnızca PAPER — gerçek kaldıraçlı emir HİÇBİR ZAMAN gönderilmez.[/]
+  [bold]/uygula SEMBOL[/]  [bold]/uygula hepsi[/]  → /durum kararlarını uygula
+  [bold]/onayla 1 3[/]  [bold]/onayla hepsi[/]     → /tara adaylarını uygula
+  [bold]/reddet[/]                       → bekleyen önerileri temizle
+  [bold]/ai SEMBOL[/]                    → tek sembol derin analiz   örn: /ai altin
+[bold cyan]İşlem[/]
+  [bold]/al SEMBOL TUTAR[/]              → Alım (paper: sanal, live: Binance MARKET BUY)
+  [bold]/sat SEMBOL \\[TUTAR][/]           → Satım (paper: sanal, live: Binance MARKET SELL)
+  [bold]/short SEMBOL TUTAR[/]           → Short (yalnızca paper, realtime kripto)
+  [bold]/koru SEMBOL[/]                  → Claude stop/hedef belirlesin (live: OCO emir)
+[bold cyan]Scalp & Kaldıraç (Paper)[/]
+  [bold]/scalp ac|kapat|durum[/]
+  [bold]/kaldirac ac|kapat|durum[/]
 [bold cyan]Otonom[/]
   [bold]/otonom ac[/]  [bold]/otonom kapat[/]  [bold]/otonom durum[/]
   [bold]/otonom mod[/]  [bold]/otonom mod guvenli|dengeli|agresif[/]
-  [bold]/otonom ayar max_islem|max_pozisyon|zarar_serisi|gunluk_zarar N[/]
+  [bold]/otonom ayar[/]  → özel limit ayarlarını göster
+[bold cyan]Bağlantı & Mod[/]
+  [bold]/canli bagla KEY SECRET[/]       → Binance API anahtarı kaydet
+  [bold]/canli mod live[/]               → GERÇEK PARA moduna geç
+  [bold]/canli mod paper[/]              → Paper (simülasyon) moduna dön
+  [bold]/canli bakiye[/]                 → Gerçek Binance bakiyeni göster
+  [bold]/canli kes[/]                    → API bağlantısını kes
 [bold cyan]Diğer[/]
   [bold]/ekle SEMBOL[/]  [bold]/cikar SEMBOL[/]  → kripto izleme listesi (max 5)
   [bold]/detay SEMBOL[/]               → veri kalitesi + kaldıraç izin bilgisi
-  [bold]/model \\[opus|sonnet|haiku][/]  → Claude modelini değiştir
-  [bold]/canli[/]                       → Binance API bağlantısı
-  [bold]/rapor[/]  [bold]/gecmis[/]  [bold]/sifirla[/]  [bold]/ayarlar[/]  [bold]q[/]=çıkış
-[bold cyan]Not:[/] Otonom mod yalnızca PAPER işlem açar — live bağlantı olsa dahi gerçek emir gönderilmez."""
+  [bold]/model[/]                        → aktif AI sağlayıcısını göster
+  [bold]/model claude|openai|gemini|ollama|grok[/]  → AI sağlayıcısını değiştir
+  [bold]/model key openai|gemini|grok API_KEY[/]    → API key kaydet
+  [bold]/bildirim bagla TOKEN CHAT_ID[/]  → Telegram bildirim kur
+  [bold]/bildirim test[/]  [bold]/bildirim kes[/]
+[bold cyan]Teknik Analiz & Backtest[/]
+  [bold]/ta SEMBOL [1m|5m|15m|1h|4h|1d][/]  → RSI, MACD, BB, EMA, ADX, sinyal
+  [bold]/mtf SEMBOL[/]                        → 4 zaman dilimi konsensüs analizi
+  [bold]/backtest SEMBOL [TF] [GÜN][/]       → geçmişte strateji test et
+  [bold]/boyut SEMBOL STOP% [RİSK%][/]       → kaç USDT almalıyım? (risk yönetimi)
+[bold cyan]Strateji & Risk[/]
+  [bold]/strateji[/]  [bold]/strateji liste[/]         → aktif strateji
+  [bold]/strateji momentum|dönüş|kırılım|konsensüs[/]
+  [bold]/strateji analiz SEMBOL[/]  → 3 strateji aynı anda
+  [bold]/risk[/]                              → portföy risk dashboardu (heat, VaR, stop)
+[bold cyan]Limit Emirler (Paper)[/]
+  [bold]/limit al SEMBOL TUTAR FİYAT [SA][/]  → fiyat hedefe düşünce al
+  [bold]/limit sat SEMBOL FİYAT [SA][/]        → fiyat hedefe çıkınca sat
+  [bold]/limit liste[/]  [bold]/limit iptal [ID|SEMBOL|hepsi][/]
+[bold cyan]Fiyat Alarmları[/]
+  [bold]/fiyat al SEMBOL TUTAR HEDEF[/]   → hedef fiyata düşünce otomatik al
+  [bold]/fiyat sat SEMBOL HEDEF[/]        → hedef fiyata çıkınca otomatik sat
+  [bold]/fiyat bildir SEMBOL HEDEF[/]     → fiyat hedefine ulaşınca bildir
+  [bold]/fiyat liste[/]  [bold]/fiyat sil[/]
+  [bold]/gecmis[/]  [bold]/performans[/]  [bold]/sifirla evet[/]  [bold]q[/]=çıkış"""
 
 _HELP_EN = """\
 [bold cyan]Analysis[/]
   [bold]/scan[/]  [bold]/scan crypto|global|forex|commodity|index[/]  → Claude scans for opportunities
   [bold]/scan long|short|scalp|day|swing|leverage[/]  → filter by trade type
   [bold]/status[/]                       → analyze open positions with Claude
-  [bold]/apply SYMBOL[/]                 → apply /status decision (stop update / take profit / cut)
-  [bold]/apply all[/]                    → apply all pending decisions
-  [bold]/approve 1 3[/]                  → execute /scan candidates
-  [bold]/reject[/]                       → clear pending /scan suggestions
+  [bold]/apply SYMBOL[/]  [bold]/apply all[/]          → apply /status decisions
+  [bold]/approve 1 3[/]  [bold]/approve all[/]          → execute /scan candidates
+  [bold]/reject[/]                       → clear pending suggestions
   [bold]/ai SYMBOL[/]                    → single symbol deep-dive   e.g. /ai gold
-[bold cyan]Trade (Paper)[/]
-  [bold]/buy SYMBOL AMOUNT[/]            → Spot Long paper buy   (stop/target auto)
-  [bold]/sell SYMBOL \\[AMOUNT][/]         → Sell position (all if no amount)
-  [bold]/short SYMBOL AMOUNT[/]          → Short paper (realtime crypto only)
-  [bold]/scalp SYMBOL AMOUNT[/]          → Scalp paper (max 30min, fee/slippage simulated)
-  [bold]/protect SYMBOL[/]              → Let Claude re-set stop/target
-[bold cyan]Scalp[/]
-  [bold]/scalp on[/]  [bold]/scalp off[/]  [bold]/scalp status[/]
-[bold cyan]Leverage (Paper)[/]
-  [bold]/leverage on[/]  [bold]/leverage off[/]  [bold]/leverage status[/]
-  [bold yellow3]⚠ PAPER only — real leveraged orders are NEVER sent.[/]
+[bold cyan]Trade[/]
+  [bold]/buy SYMBOL AMOUNT[/]            → Buy (paper: simulated, live: Binance MARKET BUY)
+  [bold]/sell SYMBOL \\[AMOUNT][/]         → Sell (paper: simulated, live: Binance MARKET SELL)
+  [bold]/short SYMBOL AMOUNT[/]          → Short (paper only, realtime crypto)
+  [bold]/protect SYMBOL[/]              → Claude sets stop/target (live: places OCO order)
+[bold cyan]Scalp & Leverage (Paper)[/]
+  [bold]/scalp on|off|status[/]
+  [bold]/leverage on|off|status[/]
 [bold cyan]Autonomous[/]
   [bold]/auto on[/]  [bold]/auto off[/]  [bold]/auto status[/]
   [bold]/auto mode[/]  [bold]/auto mode safe|balanced|aggressive[/]
-  [bold]/auto set max_trades|max_positions|loss_streak|daily_loss N[/]
+[bold cyan]Connection & Mode[/]
+  [bold]/live bagla KEY SECRET[/]        → save Binance API key
+  [bold]/live mod live[/]                → switch to REAL MONEY mode
+  [bold]/live mod paper[/]               → switch to paper (simulation)
+  [bold]/live bakiye[/]                  → show real Binance balance
+  [bold]/live kes[/]                     → disconnect API
 [bold cyan]Other[/]
   [bold]/add SYMBOL[/]  [bold]/remove SYMBOL[/]  → crypto watchlist (max 5)
   [bold]/details SYMBOL[/]              → data quality + leverage eligibility
-  [bold]/model \\[opus|sonnet|haiku][/]   → change Claude model
-  [bold]/live[/]                        → Binance API connection
-  [bold]/report[/]  [bold]/history[/]  [bold]/reset[/]  [bold]/settings[/]  [bold]q[/]=quit
-[bold cyan]Note:[/] Autonomous mode is PAPER-only — no real orders even with live connection."""
+  [bold]/model[/]                         → show active AI provider
+  [bold]/model claude|openai|gemini|ollama|grok[/]  → switch AI provider
+  [bold]/model key openai|gemini|grok API_KEY[/]    → save API key
+  [bold]/notify bagla TOKEN CHAT_ID[/]    → Setup Telegram notifications
+  [bold]/notify test[/]  [bold]/notify kes[/]
+  [bold]/price buy SYMBOL AMOUNT TARGET[/]  → auto-buy when price drops to target
+  [bold]/price sell SYMBOL TARGET[/]        → auto-sell when price rises to target
+  [bold]/price alert SYMBOL TARGET[/]       → notify when price hits target
+  [bold]/price list[/]  [bold]/price clear[/]
+  [bold]/history[/]  [bold]/report[/]  [bold]/reset[/]  [bold]q[/]=quit"""
+
+_HELP_SHORT_TR = """\
+[bold cyan]En sık kullanılanlar[/]
+  [bold]/tara[/]              → Claude fırsat tarar
+  [bold]/al BTC 500[/]        → 500 USDT Bitcoin al
+  [bold]/sat BTC[/]           → Bitcoin sat
+  [bold]/durum[/]             → açık pozisyonları analiz et
+  [bold]/ai BTC[/]            → derin sembol analizi
+  [bold]/otonom ac[/]         → otonom modu başlat
+  [bold]/gecmis[/]            → işlem geçmişi
+  [bold]/performans[/]        → performans istatistikleri
+  [bold]/sifirla evet[/]      → hesabı sıfırla
+  [bold]/yardim tam[/]        → tam komut listesi"""
+
+_HELP_SHORT_EN = """\
+[bold cyan]Most used commands[/]
+  [bold]/scan[/]              → Claude scans for opportunities
+  [bold]/buy BTC 500[/]       → buy 500 USDT of Bitcoin
+  [bold]/sell BTC[/]          → sell Bitcoin
+  [bold]/status[/]            → analyze open positions
+  [bold]/ai BTC[/]            → deep symbol analysis
+  [bold]/auto on[/]           → start autonomous mode
+  [bold]/history[/]           → trade history
+  [bold]/report[/]            → performance stats
+  [bold]/reset yes[/]         → reset account
+  [bold]/help full[/]         → full command list"""
 
 _STRINGS: dict[str, dict[str, str]] = {
     "help": {"tr": _HELP_TR, "en": _HELP_EN},
+    "help.short": {"tr": _HELP_SHORT_TR, "en": _HELP_SHORT_EN},
 
     # ── kısa açılış ipucu (startup hint, 1-2 satır) ──
     "app.hint": {
@@ -169,8 +226,8 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "[bold cyan]Claude models[/] (active: {active})",
     },
     "model.usage": {
-        "tr": "Kullanım: /model opus|sonnet|haiku|varsayilan",
-        "en": "Usage: /model opus|sonnet|haiku|varsayilan",
+        "tr": "Kullanım: /model claude|openai|gemini|ollama|grok  veya  /model key openai|gemini|grok API_KEY",
+        "en": "Usage: /model claude|openai|gemini|ollama|grok  or  /model key openai|gemini|grok API_KEY",
     },
     "model.changed": {
         "tr": "Model değişti → [bold]{model}[/]",
@@ -181,11 +238,11 @@ _STRINGS: dict[str, dict[str, str]] = {
     "otonom.started": {
         "tr": (
             "[grey58]Otonom döngü başladı: fiyat kontrolü 2sn | "
-            "pozisyon analizi 5dk | tarama 15dk.[/]"
+            "pozisyon analizi 5dk | tarama 15dk (scalp modda 3dk).[/]"
         ),
         "en": (
             "[grey58]Autonomous loop started: price check 2s | "
-            "position analysis 5min | scan 15min.[/]"
+            "position analysis 5min | scan 15min (3min in scalp mode).[/]"
         ),
     },
 
@@ -195,12 +252,12 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "[bold cyan]── REAL-MONEY CONNECTION (Binance) ──[/]",
     },
     "live.status_off": {
-        "tr": "Durum: [grey58]bağlı değil[/] — işlemler sanal hesapta (PAPER).",
-        "en": "Status: [grey58]not connected[/] — trades run on the paper account.",
+        "tr": "Durum: [grey58]bağlı değil[/] — mod: PAPER (simülasyon).",
+        "en": "Status: [grey58]not connected[/] — mode: PAPER (simulation).",
     },
     "live.status_on": {
-        "tr": "Durum: [green3]BAĞLI[/] (API anahtarı doğrulandı) — emirler hâlâ PAPER, gerçek bakiyeni /canli bakiye ile görebilirsin.",
-        "en": "Status: [green3]CONNECTED[/] (API key verified) — orders still PAPER; see real balance with /live bakiye.",
+        "tr": "Durum: [green3]BAĞLI[/]  |  Mod: {mode}  |  /canli mod live → gerçek emir  |  /canli bakiye → bakiye",
+        "en": "Status: [green3]CONNECTED[/]  |  Mode: {mode}  |  /live mod live → real orders  |  /live bakiye → balance",
     },
     "live.validating": {
         "tr": "Anahtarlar Binance'te doğrulanıyor...",
@@ -227,8 +284,8 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "[bold]Your real Binance spot balance:[/]",
     },
     "live.usage": {
-        "tr": "Alt komutlar: /canli  /canli bagla KEY SECRET  /canli bakiye  /canli kes",
-        "en": "Subcommands: /live  /live bagla KEY SECRET  /live bakiye  /live kes",
+        "tr": "Alt komutlar: /canli bagla KEY SECRET  /canli mod live|paper  /canli bakiye  /canli kes",
+        "en": "Subcommands: /live bagla KEY SECRET  /live mod live|paper  /live bakiye  /live kes",
     },
     "live.warning": {
         "tr": (

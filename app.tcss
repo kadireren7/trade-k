@@ -1,96 +1,160 @@
+/* ═══════════════════════════════════════════════════════════════
+   trade-k — terminal UI stil dosyası
+   ═══════════════════════════════════════════════════════════════ */
+
 Screen {
-    background: #0d1117;
+    background: #0a0e14;
 }
 
+/* ── Üst hesap barı ──────────────────────────────────────────── */
 #account {
     height: 1;
-    background: #161b22;
+    background: #0d1320;
     color: white;
     padding: 0 1;
+    border-bottom: solid #1a2740;
 }
 
+/* ── Ana düzen ───────────────────────────────────────────────── */
 #main {
     height: 1fr;
 }
 
 #left {
     width: 58%;
-    border-right: solid #30363d;
+    border-right: solid #1a2740;
 }
 
 #right {
     width: 42%;
 }
 
+/* ── Panel başlıkları ────────────────────────────────────────── */
 .paneltitle {
     height: 1;
-    background: #1f2937;
-    color: #e3b341;
     text-style: bold;
-}
-
-#watch {
-    height: 22;
-    background: #0d1117;
-}
-
-#positions {
-    height: 1fr;
-    background: #0d1117;
-}
-
-#pending-hint {
-    height: 1;
-    background: #0d1117;
-    color: #e3b341;
     padding: 0 1;
 }
 
+#title-market {
+    background: #0d1e33;
+    color: #58b0f5;
+}
+
+#title-positions {
+    background: #0d2218;
+    color: #4ade80;
+}
+
+#title-account {
+    background: #1a1205;
+    color: #f6c90e;
+}
+
+#title-log {
+    background: #1a0d2e;
+    color: #c084fc;
+}
+
+/* ── Piyasa tablosu ──────────────────────────────────────────── */
+#watch {
+    height: 18;
+    background: #0a0e14;
+}
+
+/* ── Pozisyonlar tablosu ─────────────────────────────────────── */
+#positions {
+    height: 1fr;
+    background: #0a0e14;
+}
+
+/* ── Hesap detay paneli ──────────────────────────────────────── */
+#acc-panel {
+    height: 11;
+    background: #0d1018;
+    border-bottom: solid #2a3018;
+    padding: 0 1;
+}
+
+/* ── Bekleyen öneri barı ─────────────────────────────────────── */
+#pending-hint {
+    height: 1;
+    background: #12100a;
+    color: #f6c90e;
+    padding: 0 1;
+}
+
+/* ── DataTable (tüm tablolar) ────────────────────────────────── */
 DataTable {
-    background: #0d1117;
+    background: #0a0e14;
 }
 
 DataTable > .datatable--header {
-    background: #161b22;
-    color: #8b949e;
+    background: #0d1320;
+    color: #5a6578;
     text-style: bold;
 }
 
-#log {
-    height: 1fr;
-    background: #0d1117;
-    border: none;
-    padding: 0 1;
+DataTable > .datatable--cursor {
+    background: #1a2740;
 }
 
+DataTable > .datatable--hover {
+    background: #101825;
+}
+
+/* ── Log paneli ──────────────────────────────────────────────── */
+#log {
+    height: 1fr;
+    background: #0a0e14;
+    border: none;
+    padding: 0 1;
+    scrollbar-color: #1a2740;
+    scrollbar-background: #0a0e14;
+}
+
+/* ── Komut girişi ────────────────────────────────────────────── */
 #cmd {
     dock: bottom;
     height: 3;
-    border: tall #e3b341;
-    background: #161b22;
-    color: white;
+    border: tall #2a4060;
+    background: #0d1320;
+    color: #e0e8f0;
 }
 
 #cmd:focus {
-    border: tall #f0c649;
+    border: tall #58b0f5;
+    background: #0d1829;
 }
 
-/* ---- kurulum & giriş ekranları ---- */
+/* ── Komut paleti ────────────────────────────────────────────── */
+#palette {
+    background: #0f1826;
+    border: round #2a4060;
+    height: auto;
+    max-height: 12;
+    padding: 0 1;
+    color: #c9d1d9;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Kurulum & Giriş ekranları
+   ───────────────────────────────────────────────────────────── */
 SetupScreen, LoginScreen, AutonomousSetupScreen {
-    background: #0d1117;
+    background: #0a0e14;
 }
 
 #authbox {
     width: 72;
     height: auto;
-    background: #161b22;
-    border: tall #e3b341;
+    background: #0d1422;
+    border: tall #f6c90e;
     padding: 1 2;
 }
 
 #authtitle {
     text-style: bold;
-    color: #e3b341;
+    color: #f6c90e;
     margin-bottom: 1;
 }
 
@@ -106,23 +170,25 @@ SetupScreen, LoginScreen, AutonomousSetupScreen {
 
 #authinput {
     margin-top: 1;
-    background: #0d1117;
-    border: tall #30363d;
+    background: #0a0e14;
+    border: tall #2a3a50;
     color: white;
 }
 
 #authinput:focus {
-    border: tall #e3b341;
+    border: tall #f6c90e;
 }
 
-/* ─── Menu system screens ─── */
+/* ─────────────────────────────────────────────────────────────
+   Menü ekranları
+   ───────────────────────────────────────────────────────────── */
 SplashMenuScreen, SettingsScreen, RiskLimitsScreen,
 AutonomousControlScreen, ConnectionsScreen, MarketDataScreen,
 ReportsScreen, SafetyStatusScreen, AutoLogsScreen,
 WatchlistScreen, DataSourceStatusScreen, InstrumentDetailScreen,
 PerformanceScreen, TradeHistoryScreen, RecommendationsScreen,
 ConfirmScreen {
-    background: #0d1117;
+    background: #0a0e14;
 }
 
 #splash-box, #settings-box, #risk-box, #auto-box,
@@ -130,14 +196,14 @@ ConfirmScreen {
 #safety-box, #wl-box, #ds-box, #detail-box,
 #perf-box, #hist-box, #recs-box {
     width: auto;
-    min-width: 68;
+    min-width: 70;
     padding: 1 2;
-    background: #161b22;
-    border: round #e3b341;
+    background: #0d1422;
+    border: round #2a4060;
 }
 
 #splash-logo {
-    color: #e3b341;
+    color: #f6c90e;
     text-style: bold;
     text-align: center;
     padding: 0 0 1 0;
@@ -149,7 +215,7 @@ ConfirmScreen {
 }
 
 #splash-welcome {
-    color: #d9d9d9;
+    color: #d0d8e4;
     padding: 0 0 1 0;
 }
 
@@ -157,7 +223,7 @@ ConfirmScreen {
 #conn-hint, #market-hint, #rep-hint, #logs-hint,
 #safety-hint, #wl-hint, #ds-hint, #detail-hint,
 #perf-hint, #hist-hint, #recs-hint, #wl-add-hint {
-    color: #6b6b6b;
+    color: #3d5070;
     padding: 1 0 0 0;
     text-align: center;
 }
@@ -166,7 +232,7 @@ ConfirmScreen {
 #conn-title, #market-title, #rep-title, #logs-title,
 #safety-title, #wl-title, #ds-title, #detail-title,
 #splash-hint, #perf-title, #hist-title, #recs-title {
-    color: #e3b341;
+    color: #f6c90e;
     text-style: bold;
     text-align: center;
     padding: 0 0 1 0;
@@ -174,7 +240,7 @@ ConfirmScreen {
 
 #settings-msg, #risk-msg, #auto-msg,
 #conn-msg, #rep-msg {
-    color: green;
+    color: #4ade80;
     text-style: bold;
     min-height: 1;
     padding: 0 0 0 0;
@@ -182,27 +248,28 @@ ConfirmScreen {
 
 #auto-status, #conn-detail, #safety-content,
 #wl-content, #detail-content, #perf-content {
-    color: #d9d9d9;
+    color: #c0cad8;
     padding: 0 0 1 0;
     min-height: 2;
 }
 
+/* ── Menü listesi ────────────────────────────────────────────── */
 ListView {
-    width: 66;
+    width: 68;
     min-height: 4;
-    border: round #30363d;
-    background: #161b22;
+    border: round #1a2740;
+    background: #0d1422;
 }
 
 ListItem {
     padding: 0 1;
-    color: #d9d9d9;
-    background: #161b22;
+    color: #b8c4d4;
+    background: #0d1422;
 }
 
 ListItem.--highlight {
-    background: #2d2009;
-    color: #e3b341;
+    background: #0e2040;
+    color: #58b0f5;
     text-style: bold;
 }
 
@@ -210,34 +277,31 @@ ListItem > Label {
     padding: 0 1;
 }
 
+/* ── Menü input alanları ─────────────────────────────────────── */
 #risk-input, #conn-input, #market-input {
-    width: 66;
-    background: #161b22;
-    border: tall #e3b341;
+    width: 68;
+    background: #0d1422;
+    border: tall #2a4060;
     color: white;
     margin-top: 0;
 }
 
+#risk-input:focus, #conn-input:focus, #market-input:focus {
+    border: tall #58b0f5;
+}
+
+/* ── Gizli öğeler ────────────────────────────────────────────── */
 .hidden {
     display: none;
 }
 
+/* ── Kaydırmalı içerik alanları ──────────────────────────────── */
 #logs-scroll, #hist-scroll, #recs-scroll, #ds-scroll {
-    width: 66;
+    width: 68;
     height: 18;
-    border: round #30363d;
+    border: round #1a2740;
 }
 
 #logs-content, #hist-content, #recs-content, #ds-content {
-    color: #d9d9d9;
-}
-
-/* ─── Command Palette ─── */
-#palette {
-    background: #1a1a2e;
-    border: round #e3b341;
-    height: auto;
-    max-height: 12;
-    padding: 0 1;
-    color: white;
+    color: #b8c4d4;
 }

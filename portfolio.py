@@ -40,12 +40,20 @@ def _load_position(d: dict) -> Position:
     return Position(**{k: v for k, v in d.items() if k in valid})
 
 
-def sanitize_levels(entry: float, stop: float, target: float) -> tuple[float, float]:
+def sanitize_levels(
+    entry: float, stop: float, target: float, direction: str = "long"
+) -> tuple[float, float]:
     """Claude'un verdiği stop/hedef seviyelerini kod tarafında doğrula."""
-    if not stop or not (entry * 0.80 <= stop <= entry * 0.999):
-        stop = entry * 0.95
-    if not target or not (entry * 1.001 <= target <= entry * 1.60):
-        target = entry * 1.10
+    if direction == "short":
+        if not stop or not (entry * 1.001 <= stop <= entry * 1.20):
+            stop = entry * 1.05
+        if not target or not (entry * 0.80 <= target <= entry * 0.999):
+            target = entry * 0.90
+    else:
+        if not stop or not (entry * 0.80 <= stop <= entry * 0.999):
+            stop = entry * 0.95
+        if not target or not (entry * 1.001 <= target <= entry * 1.60):
+            target = entry * 1.10
     return stop, target
 
 
@@ -63,6 +71,7 @@ def validate_leverage_trade(
     portfolio_equity: float,
     max_leverage: int = MAX_LEVERAGE,
     max_risk_pct: float = 0.005,
+    direction: str = "long",
 ) -> tuple[bool, str]:
     """Kaldıraçlı işlem güvenlik doğrulaması — (geçerli, mesaj)."""
     if not stop or stop <= 0:
@@ -72,11 +81,18 @@ def validate_leverage_trade(
     if leverage > max_leverage:
         return False, f"Kaldıraç {leverage}x limiti ({max_leverage}x) aşıyor"
 
-    risk_per_unit = entry - stop
-    reward_per_unit = target - entry
-    if risk_per_unit <= 0:
-        return False, "stop giriş fiyatının üstünde olamaz"
-    rr = reward_per_unit / risk_per_unit
+    if direction == "short":
+        risk_per_unit = stop - entry
+        reward_per_unit = entry - target
+        if risk_per_unit <= 0:
+            return False, "short stop giriş fiyatının altında olamaz"
+    else:
+        risk_per_unit = entry - stop
+        reward_per_unit = target - entry
+        if risk_per_unit <= 0:
+            return False, "stop giriş fiyatının üstünde olamaz"
+
+    rr = reward_per_unit / risk_per_unit if risk_per_unit > 0 else 0
     if rr < 2.0:
         return False, f"R/R {rr:.1f} < 2.0 — yetersiz kâr/risk oranı"
 
@@ -106,16 +122,25 @@ def validate_stop_update(
     current_price: float,
     current_stop: float | None,
     new_stop: float,
+    direction: str = "long",
 ) -> tuple[bool, str]:
     """Stop güncelleme güvenlik kontrolü — (geçerli, sebep)."""
     if new_stop <= 0:
         return False, "sıfır veya negatif stop kabul edilmez"
-    if new_stop >= current_price:
-        return False, "stop anlık fiyatın üstünde veya eşit olamaz"
-    if new_stop < entry * 0.75:
-        return False, "stop çok geniş — giriş fiyatının %25'inden fazla altına çekilemez"
-    if current_stop is not None and new_stop < current_stop:
-        return False, "mevcut stoptan kötüye gidiyor — stop geriye alınamaz"
+    if direction == "short":
+        if new_stop <= current_price:
+            return False, "short stop anlık fiyatın altında veya eşit olamaz"
+        if new_stop > entry * 1.25:
+            return False, "stop çok geniş — giriş fiyatının %25'inden fazla üstüne çıkamaz"
+        if current_stop is not None and new_stop > current_stop:
+            return False, "mevcut stoptan kötüye gidiyor — stop geriye alınamaz"
+    else:
+        if new_stop >= current_price:
+            return False, "stop anlık fiyatın üstünde veya eşit olamaz"
+        if new_stop < entry * 0.75:
+            return False, "stop çok geniş — giriş fiyatının %25'inden fazla altına çekilemez"
+        if current_stop is not None and new_stop < current_stop:
+            return False, "mevcut stoptan kötüye gidiyor — stop geriye alınamaz"
     return True, ""
 
 
@@ -268,7 +293,7 @@ class Portfolio:
             pnl = (pos.entry - price) * qty
             cash_back = max(0.0, qty * pos.entry + pnl)
             pos.qty -= qty
-            if pos.qty * pos.entry < 0.01:
+            if pos.qty * price < 0.01:
                 del self.positions[symbol]
             self.cash += cash_back
             self._log("SHORT_KAP", symbol, qty, price, cash_back, pnl)
@@ -352,15 +377,22 @@ class Portfolio:
         return out
 
     # ---- değerleme ----
+    def leveraged_positions(self) -> dict[str, "Position"]:
+        return {s: p for s, p in self.positions.items() if p.is_leveraged}
+
     def equity(self, prices: dict[str, float]) -> float:
         total = self.cash
         for sym, pos in self.positions.items():
+            cur = prices.get(sym, pos.entry)
             if pos.is_leveraged:
-                notional_value = pos.qty * prices.get(sym, pos.entry)
-                pnl = notional_value - pos.notional_usdt
+                pnl = (cur - pos.entry) * pos.qty
                 total += max(0.0, pos.margin_usdt + pnl)
+            elif pos.direction == "short":
+                # Short: teminat (qty*entry) + kâr/zarar = qty*(2*entry - current)
+                pnl = (pos.entry - cur) * pos.qty
+                total += max(0.0, pos.qty * pos.entry + pnl)
             else:
-                total += pos.qty * prices.get(sym, pos.entry)
+                total += pos.qty * cur
         return total
 
     def unrealized_pnl(self, symbol: str, price: float) -> tuple[float, float]:

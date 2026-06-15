@@ -12,8 +12,6 @@ from autonomous import (
     DEFAULT_AUTONOMOUS_MODE,
     AutonomousEngine,
     AutonomousState,
-    create_order,
-    futures_create_order,
 )
 from portfolio import Portfolio
 import portfolio as portfolio_mod
@@ -615,7 +613,8 @@ def test_agresif_mod_2_5_pct_zarar_devam_eder(portfolio, tmp_path):
 # ── ardışık zarar testleri ───────────────────────────────────────────────────
 
 def test_guvenli_modda_1_zarar_kilitleniyor(portfolio, tmp_path):
-    """Güvenli modda 1 ardışık zarar → risk kilidi."""
+    """Güvenli modda 1 ardışık zarar → cooldown aktif olmalı."""
+    import time as _time
     eng = make_engine(portfolio, tmp_path, "guvenli")
     portfolio.history.extend([
         {"side": "SAT", "symbol": "BTCUSDT", "pnl": -50.0,
@@ -626,12 +625,16 @@ def test_guvenli_modda_1_zarar_kilitleniyor(portfolio, tmp_path):
     eng._history_len = 0
     eng._check_trades_from_history()
 
-    assert eng.state.consecutive_losses >= 1
-    assert eng.state.risk_locked, "Güvenli modda 1 zarar → kilitlenmeliydi"
+    # Güvenli profil max_consecutive_losses=1: limit dolunca cooldown tetiklenir
+    # consecutive_losses sıfırlanır, cooldown_until gelecekte olmalı
+    assert eng.state.cooldown_until > _time.time(), (
+        "Güvenli modda 1 zarar → cooldown süresi ayarlanmalıydı"
+    )
 
 
 def test_dengeli_modda_2_zarar_kilitleniyor(portfolio, engine):
-    """Dengeli modda 2 ardışık zarar → risk kilidi."""
+    """Dengeli modda 2 ardışık zarar → cooldown aktif olmalı."""
+    import time as _time
     portfolio.history.extend([
         {"side": "SAT", "symbol": "BTCUSDT", "pnl": -50.0,
          "ts": 0, "qty": 0.01, "price": 49000.0, "usdt": 490.0},
@@ -643,8 +646,10 @@ def test_dengeli_modda_2_zarar_kilitleniyor(portfolio, engine):
     engine._history_len = 0
     engine._check_trades_from_history()
 
-    assert engine.state.consecutive_losses >= 2
-    assert engine.state.risk_locked, "Dengeli modda 2 zarar → kilitlenmeliydi"
+    # Dengeli profil max_consecutive_losses=2: 2 zarar sonrası cooldown tetiklenir
+    assert engine.state.cooldown_until > _time.time(), (
+        "Dengeli modda 2 zarar → cooldown süresi ayarlanmalıydı"
+    )
 
 
 def test_dengeli_modda_1_zarar_kilitlenmez(portfolio, engine):
@@ -680,37 +685,36 @@ def test_kazanc_ardisik_zarar_sifirliyor(portfolio, engine):
 
 # ── güvenlik testleri ─────────────────────────────────────────────────────────
 
-def test_create_order_real_order_disabled():
-    with pytest.raises(RuntimeError, match="REAL_ORDER_DISABLED"):
-        create_order()
+def test_engine_paper_mode_no_live_fn(engine):
+    """Paper modda live_buy_fn ve live_sell_fn None olmalı."""
+    assert engine.live_buy_fn is None
+    assert engine.live_sell_fn is None
 
 
-def test_futures_create_order_real_order_disabled():
-    with pytest.raises(RuntimeError, match="REAL_ORDER_DISABLED"):
-        futures_create_order()
+def test_engine_live_fn_set(portfolio, tmp_path):
+    """live_buy_fn ve live_sell_fn parametre olarak iletilebilmeli."""
+    dummy_buy = lambda s, u: (100.0, 0.001, u)
+    dummy_sell = lambda s, q: (100.0, q, q * 100.0)
+    cfg = type("cfg", (), {"autonomous_mode": "dengeli", "leverage_enabled": False,
+                            "scalp_enabled": False, "trade_plan": "dengeli",
+                            "live_autonomous": True})()
+    feed = type("feed", (), {"tickers": {}, "price": lambda s: 0.0})()
+    tracker = type("tracker", (), {})()
+    e = AutonomousEngine(
+        portfolio=portfolio, feed=feed, tracker=tracker, cfg=cfg,
+        log_fn=lambda m: None, watchlist_fn=lambda: [],
+        state_path=tmp_path / "s.json", log_path=tmp_path / "l.jsonl",
+        live_buy_fn=dummy_buy, live_sell_fn=dummy_sell,
+    )
+    assert e.live_buy_fn is dummy_buy
+    assert e.live_sell_fn is dummy_sell
 
 
-def test_create_order_kwargs_de_disabled():
-    with pytest.raises(RuntimeError, match="REAL_ORDER_DISABLED"):
-        create_order(symbol="BTCUSDT", side="BUY", type="MARKET", quantity=0.001)
-
-
-def test_live_baglanti_olsa_bile_gercek_emir_yok_guvenli(portfolio, tmp_path):
-    """Güvenli mod — live cfg olsa bile REAL_ORDER_DISABLED hatası."""
-    with pytest.raises(RuntimeError, match="REAL_ORDER_DISABLED"):
-        create_order(symbol="BTCUSDT", side="BUY")
-
-
-def test_live_baglanti_olsa_bile_gercek_emir_yok_dengeli(portfolio, tmp_path):
-    """Dengeli mod — live cfg olsa bile REAL_ORDER_DISABLED hatası."""
-    with pytest.raises(RuntimeError, match="REAL_ORDER_DISABLED"):
-        futures_create_order(symbol="BTCUSDT", side="BUY")
-
-
-def test_live_baglanti_olsa_bile_gercek_emir_yok_agresif(portfolio, tmp_path):
-    """Agresif mod — live cfg olsa bile REAL_ORDER_DISABLED hatası."""
-    with pytest.raises(RuntimeError, match="REAL_ORDER_DISABLED"):
-        create_order(symbol="BTCUSDT", side="BUY", type="MARKET")
+def test_live_autonomous_flag_default(portfolio, tmp_path):
+    """live_autonomous varsayılan olarak False olmalı (config'de)."""
+    from config import Config
+    cfg = Config()
+    assert cfg.live_autonomous is False
 
 
 # ── otonom motor durum testleri ───────────────────────────────────────────────

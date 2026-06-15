@@ -14,20 +14,14 @@ from pathlib import Path
 from typing import Callable
 
 import ai
+import config
+import indicators
 import market
 from portfolio import (
     Portfolio, calc_liquidation_price, sanitize_levels,
     validate_leverage_trade, validate_stop_update,
     MAX_LEVERAGE,
 )
-
-# ── Güvenlik engeli ─────────────────────────────────────────────────────────
-def create_order(*args, **kwargs):
-    raise RuntimeError("REAL_ORDER_DISABLED")
-
-
-def futures_create_order(*args, **kwargs):
-    raise RuntimeError("REAL_ORDER_DISABLED")
 
 
 # ── Otonom risk profilleri ───────────────────────────────────────────────────
@@ -101,15 +95,19 @@ AUTONOMOUS_PROFILES: dict[str, AutonomousProfile] = {
 DEFAULT_AUTONOMOUS_MODE = "dengeli"
 MAX_CONFIDENCE = 80  # tüm modlarda sabit üst sınır
 
-SCAN_INTERVAL = 900       # 15 dakika
-ANALYSIS_INTERVAL = 300   # 5 dakika
-PRICE_CHECK_INTERVAL = 2  # 2 saniye
+SCAN_INTERVAL = 900         # 15 dakika (normal mod)
+SCALP_SCAN_INTERVAL = 180   # 3 dakika (scalp modu — daha hızlı tarama)
+ANALYSIS_INTERVAL = 300     # 5 dakika
+PRICE_CHECK_INTERVAL = 2    # 2 saniye
 
 LOG_FILE = Path(__file__).parent / "autonomous_log.jsonl"
 STATE_FILE = Path(__file__).parent / "autonomous_state.json"
 
 
 # ── Durum kalıcılığı ─────────────────────────────────────────────────────────
+CIRCUIT_BREAKER_COOLDOWN = 7200  # 2 saat (saniye)
+
+
 @dataclass
 class AutonomousState:
     enabled: bool = False
@@ -120,6 +118,9 @@ class AutonomousState:
     risk_locked: bool = False
     daily_leveraged_trades: int = 0   # günlük kaldıraçlı işlem sayacı
     daily_leverage_locked: bool = False  # kaldıraçlı kayıp sonrası kilit
+    cooldown_until: float = 0.0       # ardışık zarar sonrası 2s tarama duraklaması
+    last_scan_time: float = 0.0       # son tarama zamanı
+    last_analysis_time: float = 0.0   # son pozisyon analizi zamanı
 
     def save(self, path: Path = STATE_FILE) -> None:
         path.write_text(json.dumps(asdict(self), indent=2))
@@ -154,6 +155,8 @@ class AutonomousEngine:
         sync_feed_fn: Callable[[], None] | None = None,
         state_path: Path = STATE_FILE,
         log_path: Path = LOG_FILE,
+        live_buy_fn=None,   # async (sym, usdt) → (fill_price, fill_qty, fill_usdt)
+        live_sell_fn=None,  # async (sym, qty)  → (fill_price, fill_qty, fill_usdt)
     ) -> None:
         self.portfolio = portfolio
         self.feed = feed
@@ -162,6 +165,8 @@ class AutonomousEngine:
         self.log = log_fn
         self.get_watchlist = watchlist_fn
         self.sync_feed = sync_feed_fn
+        self.live_buy_fn = live_buy_fn
+        self.live_sell_fn = live_sell_fn
         self._state_path = state_path
         self._log_path = log_path
         self.state = AutonomousState.load(state_path)
@@ -280,8 +285,26 @@ class AutonomousEngine:
                      f"min güven %{p.leverage_min_confidence} | R/R {p.leverage_min_rr})"
             )
         )
+        otonom_type = getattr(self.cfg, "otonom_trade_type", "long")
+        _ALLOWED_MAP: dict[str, set[str]] = {
+            "long":      {"AL", "SPOT_AL"},
+            "short":     {"SHORT_AL"},
+            "longshort": {"AL", "SPOT_AL", "SHORT_AL"},
+            "scalp":     {"SCALP_AL"},
+            "kaldirac":  {"AL", "SPOT_AL", "LEVERAGE_AL"},
+            "tam":       {"AL", "SPOT_AL", "SHORT_AL", "SCALP_AL", "LEVERAGE_AL"},
+        }
+        _active_allowed = _ALLOWED_MAP.get(otonom_type, {"AL", "SPOT_AL"})
+        _TYPE_LABEL = {
+            "long": "LONG", "short": "SHORT",
+            "longshort": "LONG+SHORT", "scalp": "SCALP",
+            "kaldirac": "KALDIRAÇ", "tam": "LONG+SHORT+SCALP+LEV",
+        }
+        trade_type_label = _TYPE_LABEL.get(otonom_type, otonom_type.upper())
         lines = [
             f"[bold]Otonom:[/] {'[green3]AÇIK[/]' if self.state.enabled else '[grey58]KAPALI[/]'}",
+            f"[bold]Aktif trade türü:[/] [cyan]{trade_type_label}[/]",
+            f"[bold]İzinli aksiyonlar:[/] {', '.join(sorted(_active_allowed))}",
             f"[bold]Otonom risk modu:[/] [{mc}]{p.name}[/]",
             f"[bold]Bugünkü işlem:[/] {self.state.daily_trades} / {p.max_daily_trades}",
             f"[bold]Açık pozisyon:[/] {len(self.portfolio.positions)} / {p.max_open_positions}",
@@ -292,6 +315,11 @@ class AutonomousEngine:
             f"[bold]Günlük zarar limiti:[/] %{p.daily_loss_limit_percent:.1f} → otonom kapanır",
             f"[bold]Ardışık zarar limiti:[/] {p.max_consecutive_losses} zarar → yeni işlem kilidi",
             f"[bold]Risk kilidi:[/] {'[red3]AKTİF[/]' if self.state.risk_locked else '[green3]Kapalı[/]'}",
+            *(
+                [f"[bold]Circuit breaker:[/] [gold3]Soğuma {int(self.state.cooldown_until - time.time())//60}dk[/]"]
+                if self.state.cooldown_until and time.time() < self.state.cooldown_until
+                else []
+            ),
             f"[bold]Kaldıraçlı paper:[/] {lev_status}",
             f"[bold]Bugünkü kaldıraçlı:[/] {self.state.daily_leveraged_trades} / 1",
         ]
@@ -323,8 +351,10 @@ class AutonomousEngine:
     # ── iç döngü ────────────────────────────────────────────────────────────
 
     async def _loop(self) -> None:
-        self.state.last_scan_time = time.time() - SCAN_INTERVAL
-        self.state.last_analysis_time = time.time() - ANALYSIS_INTERVAL
+        if self.state.last_scan_time == 0.0:
+            self.state.last_scan_time = time.time() - SCAN_INTERVAL
+        if self.state.last_analysis_time == 0.0:
+            self.state.last_analysis_time = time.time() - ANALYSIS_INTERVAL
 
         while self.state.enabled:
             try:
@@ -339,11 +369,14 @@ class AutonomousEngine:
                 # Kaldıraçlı pozisyonlarda kâr varsa stop'u hemen break-even'e taşı
                 self._check_leveraged_break_even()
 
-                if now - getattr(self.state, "last_analysis_time", 0) >= ANALYSIS_INTERVAL:
+                if now - self.state.last_analysis_time >= ANALYSIS_INTERVAL:
                     self.state.last_analysis_time = now
                     await self._run_position_analysis()
 
-                if now - getattr(self.state, "last_scan_time", 0) >= SCAN_INTERVAL:
+                _scalp_on = getattr(config.current(), "scalp_enabled", False)
+                _tam_mod = getattr(config.current(), "trade_plan", "dengeli") == "tam"
+                _scan_iv = SCALP_SCAN_INTERVAL if (_scalp_on or _tam_mod) else SCAN_INTERVAL
+                if now - self.state.last_scan_time >= _scan_iv:
                     self.state.last_scan_time = now
                     await self._run_scan()
 
@@ -379,7 +412,7 @@ class AutonomousEngine:
         for trade in new_trades:
             side = trade.get("side", "")
             pnl = trade.get("pnl")
-            if side in ("SAT", "SAT_LEV", "SAT_LIQ") and pnl is not None:
+            if side in ("SAT", "SHORT_KAP", "LEVERAGE KAPATILDI", "LİKİDE") and pnl is not None:
                 if pnl < 0:
                     self.state.consecutive_losses += 1
                     self._log_event(
@@ -388,14 +421,19 @@ class AutonomousEngine:
                                 f"Ardışık zarar: {self.state.consecutive_losses}"),
                     )
                     if self.state.consecutive_losses >= p.max_consecutive_losses:
-                        self.state.risk_locked = True
+                        # Ardışık zarar → 2 saatlik tarama duraklaması (tam kilit değil)
+                        self.state.cooldown_until = time.time() + CIRCUIT_BREAKER_COOLDOWN
+                        self.state.consecutive_losses = 0
+                        cooldown_end = time.strftime(
+                            "%H:%M", time.localtime(self.state.cooldown_until)
+                        )
                         self.log(
                             f"[bold red3][OTONOM] Üst üste "
                             f"{p.max_consecutive_losses} zarar — "
-                            f"yeni işlem açma kilidi devreye girdi.[/]"
+                            f"2 saatlik tarama duraklaması ({cooldown_end}'a kadar).[/]"
                         )
                     # Kaldıraçlı kayıp: günlük leverage kilitlensin
-                    if side in ("SAT_LEV", "SAT_LIQ"):
+                    if side in ("LEVERAGE KAPATILDI", "LİKİDE"):
                         self.state.daily_leverage_locked = True
                         self.log(
                             "[bold red3][OTONOM] Kaldıraçlı zarar — "
@@ -456,7 +494,18 @@ class AutonomousEngine:
         elif pd.karar in ("KAR_AL", "ZARARI_KES"):
             close_reason = pd.close_reason or pd.gerekce
             try:
-                result_str = self.portfolio.sell(sym, current_price)
+                pos = self.portfolio.positions.get(sym)
+                fill_price = current_price
+                if (self.live_sell_fn and pos
+                        and getattr(self.cfg, "live_autonomous", False)):
+                    try:
+                        fp, _fq, _fu = await self.live_sell_fn(sym, pos.qty)
+                        fill_price = fp
+                    except Exception as le:
+                        self._log_event("error", symbol=sym,
+                                        reason=f"Live sell hatası: {le}")
+                        return False, f"{market.short_name(sym)}: live satış başarısız: {le}"
+                result_str = self.portfolio.sell(sym, fill_price)
                 if pd.karar == "KAR_AL":
                     color, label = "green3", "kâr alındı"
                 else:
@@ -471,7 +520,7 @@ class AutonomousEngine:
                 )
                 self.log(f"   {result_str}")
                 if self.sync_feed:
-                    asyncio.create_task(self.sync_feed())
+                    self.sync_feed()
                 return True, msg
             except Exception as e:
                 err = f"{market.short_name(sym)}: kapatma hatası: {e}"
@@ -487,7 +536,7 @@ class AutonomousEngine:
                 return False, msg
 
             valid, reason = validate_stop_update(
-                pos.entry, current_price, pos.stop, new_stop
+                pos.entry, current_price, pos.stop, new_stop, pos.direction
             )
             if not valid:
                 msg = f"{market.short_name(sym)} stop güncellenemedi: {reason}"
@@ -515,7 +564,7 @@ class AutonomousEngine:
 
             if new_stop and not pos.stop:
                 valid, reason = validate_stop_update(
-                    pos.entry, current_price, pos.stop, new_stop
+                    pos.entry, current_price, pos.stop, new_stop, pos.direction
                 )
                 if not valid:
                     msg = f"{market.short_name(sym)} KORU stop geçersiz: {reason}"
@@ -525,11 +574,18 @@ class AutonomousEngine:
                 changes.append(f"stop={new_stop:,.4f}")
 
             if new_target and not pos.target:
-                if new_target <= current_price:
-                    msg = f"{market.short_name(sym)} KORU: hedef anlık fiyatın altında — reddedildi"
-                    if auto:
-                        self.log(f"[red3]{prefix}{msg}[/]")
-                    return False, msg
+                if pos.direction == "short":
+                    if new_target >= current_price:
+                        msg = f"{market.short_name(sym)} KORU: short hedef anlık fiyatın üstünde — reddedildi"
+                        if auto:
+                            self.log(f"[red3]{prefix}{msg}[/]")
+                        return False, msg
+                else:
+                    if new_target <= current_price:
+                        msg = f"{market.short_name(sym)} KORU: hedef anlık fiyatın altında — reddedildi"
+                        if auto:
+                            self.log(f"[red3]{prefix}{msg}[/]")
+                        return False, msg
                 changes.append(f"hedef={new_target:,.4f}")
 
             if not changes:
@@ -605,6 +661,8 @@ class AutonomousEngine:
         """5 dakikada bir: açık pozisyonları Claude ile analiz et."""
         if not self.portfolio.positions:
             return
+        syms = ", ".join(market.short_name(s) for s in self.portfolio.positions)
+        self.log(f"[grey58][OTONOM] Pozisyon analizi başlıyor: {syms}…[/]")
         try:
             positions_data = self._build_positions_data()
             result = await ai.analyze_positions(positions_data, self.portfolio.cash)
@@ -614,6 +672,7 @@ class AutonomousEngine:
                 self.log(f"[cyan][OTONOM] Pozisyon analizi:[/] {summary}")
 
             if not analysis:
+                self.log("[grey58][OTONOM] Analiz tamamlandı — karar verisi ayrıştırılamadı.[/]")
                 return
 
             for pd in analysis.pozisyonlar:
@@ -640,17 +699,29 @@ class AutonomousEngine:
 
         except Exception as e:
             self._log_event("error", reason=f"Pozisyon analiz hatası: {e}")
+            self.log(f"[red3][OTONOM] Pozisyon analiz hatası: {e}[/]")
 
     async def _run_scan(self) -> None:
         """15 dakikada bir: yeni fırsat ara ve uygun adayda paper trade aç."""
         p = self.effective_profile
         if self.state.risk_locked:
             self._log_event("skip", reason="risk kilidi aktif")
+            self.log("[red3][OTONOM] Tarama atlandı: risk kilidi aktif.[/]")
+            return
+        # Ardışık zarar sonrası circuit breaker soğuma süresi
+        if self.state.cooldown_until and time.time() < self.state.cooldown_until:
+            remaining = int(self.state.cooldown_until - time.time()) // 60
+            self._log_event("skip", reason=f"circuit breaker soğuma: {remaining}dk kaldı")
+            self.log(f"[gold3][OTONOM] Tarama atlandı: soğuma süresi {remaining}dk.[/]")
             return
         if len(self.portfolio.positions) >= p.max_open_positions:
             self._log_event(
                 "skip",
                 reason=f"max açık pozisyon ({p.max_open_positions}) doldu"
+            )
+            self.log(
+                f"[grey58][OTONOM] Tarama atlandı: max pozisyon dolu "
+                f"({len(self.portfolio.positions)}/{p.max_open_positions}).[/]"
             )
             return
         if self.state.daily_trades >= p.max_daily_trades:
@@ -658,35 +729,155 @@ class AutonomousEngine:
                 "skip",
                 reason=f"günlük işlem limiti ({p.max_daily_trades}) doldu"
             )
+            self.log(
+                f"[grey58][OTONOM] Tarama atlandı: günlük işlem limiti "
+                f"({self.state.daily_trades}/{p.max_daily_trades}) doldu.[/]"
+            )
             return
 
+        self.log(
+            f"[grey58][OTONOM] Piyasa taraması başlıyor… "
+            f"(işlem: {self.state.daily_trades}/{p.max_daily_trades} | "
+            f"pos: {len(self.portfolio.positions)}/{p.max_open_positions})[/]"
+        )
         try:
             positions = {
                 s: {"miktar": pos.qty, "giris": pos.entry,
                     "stop": pos.stop, "hedef": pos.target}
                 for s, pos in self.portfolio.positions.items()
             }
-            watchlist = self.get_watchlist()
+            # Kullanıcı watchlist'ini al, sonra kripto universe ile birleştir
+            # Yahoo Finance / forex / emtia sembolleri otonom moda dahil edilmiyor
+            user_wl = [
+                s for s in self.get_watchlist()
+                if s.endswith("USDT") and "=" not in s and "-" not in s
+            ]
+            crypto_universe = list(market.AUTONOMOUS_CRYPTO_UNIVERSE)
+            # Kullanıcı watchlist'indeki semboller önce gelsin
+            watchlist = user_wl + [s for s in crypto_universe if s not in user_wl]
+
             lev_enabled = getattr(self.cfg, "leverage_enabled", False)
             trade_plan = getattr(self.cfg, "trade_plan", "dengeli")
-            result = await ai.scan_market_filtered(
-                watchlist, self.portfolio.cash, positions,
-                leverage_enabled=lev_enabled,
-                max_leverage=p.max_leverage,
-                trade_plan=trade_plan,
-            )
+            otonom_type = getattr(self.cfg, "otonom_trade_type", "long")
+
+            # ── İzin verilen işlem tipleri (otonom_trade_type'a göre) ───────────
+            _ALLOWED_MAP: dict[str, set[str]] = {
+                "long":      {"AL", "SPOT_AL"},
+                "short":     {"SHORT_AL"},
+                "longshort": {"AL", "SPOT_AL", "SHORT_AL"},
+                "scalp":     {"SCALP_AL"},
+                "kaldirac":  {"AL", "SPOT_AL", "LEVERAGE_AL"},
+                "tam":       {"AL", "SPOT_AL", "SHORT_AL", "SCALP_AL", "LEVERAGE_AL"},
+            }
+            _allowed = _ALLOWED_MAP.get(otonom_type, {"AL", "SPOT_AL"})
+            # kaldıraç devre dışıysa LEVERAGE_AL kaldır
+            if not lev_enabled:
+                _allowed = _allowed - {"LEVERAGE_AL"}
+
+            # ── TA ön filtresi: otonom_trade_type'a göre AL/SAT sinyali ─────────
+            _TA_MODE = {
+                "long":      "AL",
+                "short":     "SAT",
+                "longshort": "AL+SAT",
+                "scalp":     "AL+SAT",
+                "kaldirac":  "AL",
+                "tam":       "AL+SAT",
+            }
+            ta_mode = _TA_MODE.get(otonom_type, "AL")
+
+            crypto_wl = watchlist  # zaten sadece kripto
+            tf = "15m" if (otonom_type == "scalp" or
+                           getattr(config.current(), "scalp_enabled", False)) else "1h"
+            try:
+                if ta_mode == "AL+SAT":
+                    ta_long = await indicators.scan_signals(crypto_wl, tf, filter_signal="AL")
+                    ta_short = await indicators.scan_signals(crypto_wl, tf, filter_signal="SAT")
+                    ta_symbols = {r.symbol for r in ta_long} | {r.symbol for r in ta_short}
+                elif ta_mode == "SAT":
+                    ta_short = await indicators.scan_signals(crypto_wl, tf, filter_signal="SAT")
+                    ta_symbols = {r.symbol for r in ta_short}
+                else:
+                    ta_long = await indicators.scan_signals(crypto_wl, tf, filter_signal="AL")
+                    ta_symbols = {r.symbol for r in ta_long}
+
+                in_pos = set(self.portfolio.positions.keys())
+                filtered_wl = [s for s in watchlist if s in ta_symbols or s in in_pos]
+                if filtered_wl:
+                    watchlist = filtered_wl
+                    self._log_event(
+                        "ta_filter",
+                        reason=f"TA filtresi ({ta_mode}): {len(crypto_wl)}→{len(filtered_wl)} kripto aday"
+                    )
+                    self.log(
+                        f"[grey58][OTONOM] TA filtresi ({ta_mode}): {len(crypto_wl)} sembolden "
+                        f"{len(filtered_wl)} aday geçti → AI'ya gönderiliyor[/]"
+                    )
+                else:
+                    # TA sinyali yok → fallback: sadece kullanıcı watchlist'i kullan
+                    fallback = user_wl or crypto_wl[:20]
+                    watchlist = fallback
+                    self.log(
+                        f"[grey58][OTONOM] TA filtresi ({ta_mode}): sinyal bulunamadı, "
+                        f"watchlist fallback ({len(watchlist)} sembol) → AI'ya gönderiliyor[/]"
+                    )
+            except Exception as ta_err:
+                self.log(f"[grey58][OTONOM] TA filtresi atlandı ({ta_err}), tam liste kullanılıyor[/]")
+
+            # AI taraması: otonom_type'a göre doğru fonksiyonu seç
+            # Tüm çağrılarda category="kripto" → Yahoo/forex verisi karışmıyor
+            if otonom_type == "short":
+                result = await ai.scan_directional(
+                    watchlist, self.portfolio.cash, positions, direction="short"
+                )
+            elif otonom_type == "scalp":
+                result = await ai.scan_directional(
+                    watchlist, self.portfolio.cash, positions, direction="scalp"
+                )
+            elif otonom_type == "long":
+                result = await ai.scan_market_filtered(
+                    watchlist, self.portfolio.cash, positions,
+                    category="kripto",
+                    leverage_enabled=False,
+                    max_leverage=p.max_leverage,
+                    trade_plan="sadece_long",
+                )
+            elif otonom_type == "kaldirac":
+                result = await ai.scan_market_filtered(
+                    watchlist, self.portfolio.cash, positions,
+                    category="kripto",
+                    leverage_enabled=lev_enabled,
+                    max_leverage=p.max_leverage,
+                    trade_plan="tam",
+                )
+            else:
+                # longshort, tam → dengeli/tam plan, her iki yön
+                _plan_map = {"longshort": "dengeli", "tam": "tam"}
+                effective_plan = _plan_map.get(otonom_type, "dengeli")
+                result = await ai.scan_market_filtered(
+                    watchlist, self.portfolio.cash, positions,
+                    category="kripto",
+                    leverage_enabled=lev_enabled,
+                    max_leverage=p.max_leverage,
+                    trade_plan=effective_plan,
+                )
 
             summary = ai.strip_machine_lines(result)
             if summary:
                 self.log(f"[grey58][OTONOM] Tarama:[/] {summary}")
 
             suggestions = ai.parse_suggestions(result)
-            _allowed = {"AL", "SPOT_AL"}
-            if trade_plan in ("dengeli", "tam"):
-                _allowed |= {"SHORT_AL", "SCALP_AL"}
-            if trade_plan == "tam" and lev_enabled:
-                _allowed.add("LEVERAGE_AL")
-            candidates = [s for s in suggestions if s.islem in _allowed]
+            candidates = []
+            for s in suggestions:
+                if s.islem in _allowed:
+                    candidates.append(s)
+                else:
+                    self._log_event(
+                        "skip", symbol=s.sembol,
+                        reason=f"blocked_by_trade_type: {s.islem} otonom_type={otonom_type}",
+                    )
+
+            if not candidates:
+                self.log("[grey58][OTONOM] Tarama tamamlandı — işlem yapılacak aday bulunamadı.[/]")
 
             for s in candidates:
                 if not self.state.enabled:
@@ -701,6 +892,7 @@ class AutonomousEngine:
                 if sym in self.portfolio.positions:
                     self._log_event("skip", symbol=sym,
                                     reason="zaten açık pozisyon var")
+                    self.log(f"[grey58][OTONOM] {market.short_name(sym)} atlandı: zaten açık pozisyon var.[/]")
                     continue
 
                 # LEVERAGE_AL adayını ayrı işle
@@ -711,12 +903,17 @@ class AutonomousEngine:
                 if s.basari_yuzdesi < p.min_confidence:
                     self._log_event("skip", symbol=sym,
                                     reason=f"confidence düşük: %{s.basari_yuzdesi} < %{p.min_confidence}")
+                    self.log(
+                        f"[grey58][OTONOM] {market.short_name(sym)} atlandı: "
+                        f"güven %{s.basari_yuzdesi} < eşik %{p.min_confidence}[/]"
+                    )
                     continue
                 if s.basari_yuzdesi > MAX_CONFIDENCE:
                     s.basari_yuzdesi = MAX_CONFIDENCE
 
                 if not s.zarar_kes or not s.kar_al:
                     self._log_event("skip", symbol=sym, reason="stop/hedef eksik")
+                    self.log(f"[grey58][OTONOM] {market.short_name(sym)} atlandı: stop/hedef eksik[/]")
                     continue
 
                 price = self.feed.price(sym)
@@ -725,6 +922,7 @@ class AutonomousEngine:
                         price = await market.quote(sym)
                     except Exception:
                         self._log_event("skip", symbol=sym, reason="fiyat alınamadı")
+                        self.log(f"[grey58][OTONOM] {market.short_name(sym)} atlandı: fiyat alınamadı[/]")
                         continue
 
                 stop_risk = abs(price - s.zarar_kes)
@@ -733,11 +931,16 @@ class AutonomousEngine:
                 if rr < p.min_risk_reward:
                     self._log_event("skip", symbol=sym,
                                     reason=f"R/R düşük: {rr:.2f} < {p.min_risk_reward}")
+                    self.log(
+                        f"[grey58][OTONOM] {market.short_name(sym)} atlandı: "
+                        f"R/R {rr:.2f} < eşik {p.min_risk_reward}[/]"
+                    )
                     continue
 
                 usdt = min(s.tutar_usdt, self.portfolio.cash * p.max_trade_percent)
                 if usdt < 1:
                     self._log_event("skip", symbol=sym, reason="yetersiz nakit")
+                    self.log(f"[grey58][OTONOM] {market.short_name(sym)} atlandı: yetersiz nakit[/]")
                     continue
 
                 # SHORT_AL: veri kalitesi kontrolü
@@ -745,6 +948,7 @@ class AutonomousEngine:
                     allowed, reason = market.trade_allowed(sym)
                     if not allowed:
                         self._log_event("skip", symbol=sym, reason=f"short engellendi: {reason}")
+                        self.log(f"[grey58][OTONOM] {market.short_name(sym)} short atlandı: {reason}[/]")
                         continue
 
                 # SCALP_AL: veri kalitesi kontrolü
@@ -752,6 +956,7 @@ class AutonomousEngine:
                     allowed, reason = market.trade_allowed(sym)
                     if not allowed:
                         self._log_event("skip", symbol=sym, reason=f"scalp engellendi: {reason}")
+                        self.log(f"[grey58][OTONOM] {market.short_name(sym)} scalp atlandı: {reason}[/]")
                         continue
 
                 try:
@@ -770,7 +975,19 @@ class AutonomousEngine:
                         log_action = "SCALP açıldı"
                     else:
                         stop, target = sanitize_levels(price, s.zarar_kes, s.kar_al)
-                        self.portfolio.buy(sym, usdt, price, stop=stop, target=target)
+                        fill_price = price
+                        fill_usdt = usdt
+                        if (self.live_buy_fn
+                                and getattr(self.cfg, "live_autonomous", False)):
+                            try:
+                                fp, _fq, fu = await self.live_buy_fn(sym, usdt)
+                                fill_price, fill_usdt = fp, fu
+                            except Exception as le:
+                                self._log_event("error", symbol=sym,
+                                                reason=f"Live buy hatası: {le}")
+                                continue
+                        self.portfolio.buy(sym, fill_usdt, fill_price,
+                                           stop=stop, target=target)
                         decision_label = "AL"
                         log_color = "green3"
                         log_action = "AL açıldı"
@@ -796,12 +1013,13 @@ class AutonomousEngine:
                         f"hedef {_fp(target_used)} | R/R {rr_actual:.2f}"
                     )
                     if self.sync_feed:
-                        asyncio.create_task(self.sync_feed())
+                        self.sync_feed()
                 except ValueError as e:
                     self._log_event("error", symbol=sym, reason=str(e))
 
         except Exception as e:
             self._log_event("error", reason=f"Tarama hatası: {e}")
+            self.log(f"[red3][OTONOM] Tarama hatası: {e}[/]")
 
     async def _handle_leverage_candidate(
         self, s: "ai.Suggestion", sym: str, p: AutonomousProfile
@@ -916,7 +1134,7 @@ class AutonomousEngine:
                 f"liq {liq:,.4f} | risk {risk:.2f} USDT"
             )
             if self.sync_feed:
-                asyncio.create_task(self.sync_feed())
+                self.sync_feed()
         except ValueError as e:
             self._log_event("error", symbol=sym, reason=str(e))
 
@@ -926,15 +1144,22 @@ class AutonomousEngine:
         data = []
         for sym, pos in self.portfolio.positions.items():
             cur = self.feed.price(sym) or pos.entry
-            pnl = (cur - pos.entry) * pos.qty
-            stop_dist = (
-                round((cur - pos.stop) / cur * 100, 2)
-                if pos.stop else None
-            )
-            target_dist = (
-                round((pos.target - cur) / cur * 100, 2)
-                if pos.target else None
-            )
+            if pos.direction == "short":
+                pnl = (pos.entry - cur) * pos.qty
+                stop_dist = (
+                    round((pos.stop - cur) / cur * 100, 2) if pos.stop else None
+                )
+                target_dist = (
+                    round((cur - pos.target) / cur * 100, 2) if pos.target else None
+                )
+            else:
+                pnl = (cur - pos.entry) * pos.qty
+                stop_dist = (
+                    round((cur - pos.stop) / cur * 100, 2) if pos.stop else None
+                )
+                target_dist = (
+                    round((pos.target - cur) / cur * 100, 2) if pos.target else None
+                )
             stop_risk = abs(cur - pos.stop) if pos.stop else 0
             target_gain = abs(pos.target - cur) if pos.target else 0
             rr = (round(target_gain / stop_risk, 2)
@@ -997,5 +1222,14 @@ class AutonomousEngine:
         try:
             with open(self._log_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            # Rotasyon: 10.000 satırı aşarsa son 5.000 satırı tut
+            try:
+                lines = self._log_path.read_text(encoding="utf-8").splitlines()
+                if len(lines) > 10_000:
+                    self._log_path.write_text(
+                        "\n".join(lines[-5_000:]) + "\n", encoding="utf-8"
+                    )
+            except Exception:
+                pass
         except Exception:
             pass

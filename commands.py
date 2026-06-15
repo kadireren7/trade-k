@@ -218,8 +218,8 @@ REGISTRY: list[Command] = [
         tags=["auto", "otonom", "autonomous"],
         risk_level="medium",
         visible_in_help=True,
-        sub_commands=["ac", "kapat", "durum", "mod", "ayar",
-                      "on", "off", "status", "mode", "set"],
+        sub_commands=["ac", "kapat", "durum", "mod", "ayar", "sifirla",
+                      "on", "off", "status", "mode", "set", "reset"],
     ),
     Command(
         command_tr="/scalp",
@@ -308,7 +308,7 @@ REGISTRY: list[Command] = [
         tags=["live", "canlı", "binance", "connection"],
         risk_level="low",
         visible_in_help=True,
-        sub_commands=["bagla", "bakiye", "kes"],
+        sub_commands=["bagla", "bakiye", "kes", "mod"],
     ),
     # ── Diğer ────────────────────────────────────────────────────────────────
     Command(

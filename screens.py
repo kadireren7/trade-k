@@ -37,24 +37,35 @@ SPLASH_LOGO = """\
     ██║   ██╔══██╗██╔══██║██║  ██║██╔══╝      ██╔═██╗
     ██║   ██║  ██║██║  ██║██████╔╝███████╗    ██║  ██╗
     ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝ ╚══════╝    ╚═╝  ╚═╝
-              PAPER TRADING TERMINAL  [REAL ORDERS: OFF]"""
+                   Claude destekli trading terminali"""
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 
 def _build_status_chips(cfg: Config) -> str:
     """Status chip satırı - Rich markup string döner."""
-    claude_ok = shutil.which("claude") is not None
     binance_on = bool(cfg.binance_key)
+    is_live = binance_on and getattr(cfg, "trading_mode", "paper") == "live"
     lang_str = "TR" if cfg.language == "tr" else "EN"
-    model_upper = cfg.model.upper()
+    provider = getattr(cfg, "ai_provider", "claude")
+    _pmodel = {
+        "claude": cfg.model.upper(),
+        "openai": getattr(cfg, "openai_model", "gpt-4o").upper(),
+        "gemini": getattr(cfg, "gemini_model", "gemini-2.0-flash").replace("gemini-", "").upper(),
+        "ollama": getattr(cfg, "ollama_model", "llama3.2").upper(),
+        "grok": getattr(cfg, "grok_model", "grok-3-mini").upper(),
+    }.get(provider, provider.upper())
+    ai_label = f"{provider.upper()}:{_pmodel}"
+    ai_ok = shutil.which("claude") is not None if provider == "claude" else bool(
+        getattr(cfg, f"{provider}_api_key", "") or provider == "ollama"
+    )
     parts = [
-        "[bold white on dark_orange] ◈ PAPER MODE [/]",
-        "[bold white on dark_red] ✕ REAL ORDERS: OFF [/]",
-        (f"[bold black on green3] ✔ CLAUDE:{model_upper} [/]" if claude_ok
-         else "[bold white on red3] ✕ CLAUDE:OFFLINE [/]"),
-        (f"[bold black on green3] ✔ BINANCE:KEY [/]" if binance_on
-         else "[bold white on grey27] ○ BINANCE:NO KEY [/]"),
+        ("[bold black on green3] ⚡ LIVE [/]" if is_live
+         else "[bold white on dark_orange] ◈ PAPER [/]"),
+        (f"[bold black on green3] ✔ {ai_label} [/]" if ai_ok
+         else f"[bold white on red3] ✕ {ai_label}:YOK [/]"),
+        (f"[bold black on green3] ✔ BİNANCE:BAĞLI [/]" if binance_on
+         else "[bold white on red3] ✕ BİNANCE:BAĞ­LANMADI [/]"),
         f"[bold white on grey35] {lang_str} [/]",
     ]
     return "  ".join(parts)
@@ -219,7 +230,7 @@ class _MenuScreen(Screen):
 
     BINDINGS = [
         Binding("escape", "go_back", "Geri", show=False),
-        Binding("q", "quit_app", "Çıkış", show=False),
+        Binding("q", "go_back", "Geri", show=False),
     ]
 
     def action_go_back(self) -> None:
@@ -288,6 +299,8 @@ class SplashMenuScreen(_MenuScreen):
         Binding("5", "select_5", show=False),
         Binding("6", "select_6", show=False),
         Binding("7", "select_7", show=False),
+        Binding("8", "select_8", show=False),
+        Binding("9", "select_9", show=False),
     ]
 
     def __init__(self, cfg: Config, portfolio_summary: str = "") -> None:
@@ -295,40 +308,114 @@ class SplashMenuScreen(_MenuScreen):
         self._cfg = cfg
         self._portfolio_summary = portfolio_summary
 
+    def _ex_label(self) -> str:
+        """Aktif borsanın bağlantı durumunu dinamik göster."""
+        cfg = self._cfg
+        ex = getattr(cfg, "exchange", "binance")
+        mode = getattr(cfg, "trading_mode", "paper")
+        if ex == "binance":
+            on = bool(cfg.binance_key)
+        elif ex == "bybit":
+            on = bool(getattr(cfg, "bybit_key", ""))
+        elif ex == "okx":
+            on = bool(getattr(cfg, "okx_key", ""))
+        else:
+            on = False
+        status = "✔ BAĞLI" if on else "✗ BAĞLANMADI"
+        return f"{ex.upper()} · {status} · {mode.upper()}"
+
+    def _ai_label(self) -> str:
+        cfg = self._cfg
+        provider = getattr(cfg, "ai_provider", "claude")
+        model = getattr(cfg, "model", "sonnet")
+        return f"{provider.upper()} · {model}"
+
+    def _auto_label(self) -> str:
+        from pathlib import Path as _P
+        import json as _j
+        try:
+            st = _j.loads((_P(__file__).parent / "autonomous_state.json").read_text())
+            enabled = st.get("enabled", False)
+            mode = getattr(self._cfg, "autonomous_mode", "dengeli")
+            return ("AÇIK · " if enabled else "KAPALI · ") + mode
+        except Exception:
+            return "KAPALI"
+
     def _menu_items(self) -> list[str]:
         lang = i18n.lang()
+        cfg = self._cfg
+        ex_label   = self._ex_label()
+        ai_label   = self._ai_label()
+        auto_label = self._auto_label()
+        lev   = "AÇIK" if cfg.leverage_enabled else "KAPALI"
+        scalp = "AÇIK" if cfg.scalp_enabled else "KAPALI"
+        strat = getattr(cfg, "active_strategy", "konsensüs")
+        theme = getattr(cfg, "theme", "cyber")
+
         if lang == "tr":
             return [
-                "  1.  Trading Terminal",
-                "  2.  Otonom Kontrol",
-                "  3.  Piyasa & Veri",
-                "  4.  Bağlantılar",
-                "  5.  Ayarlar",
-                "  6.  Raporlar",
-                "  7.  Çıkış",
+                f"  1.  Trading Terminali           [komutlar · işlemler · alarmlar]",
+                f"  2.  Otonom AI Modu              [{auto_label}]",
+                f"  3.  Backtest & Teknik Analiz    [walk-forward · Monte Carlo · TA]",
+                f"  4.  Piyasa & İzleme             [fiyatlar · haberler · tarama]",
+                f"  5.  Bağlantılar & API           [{ex_label}]",
+                f"  6.  AI & Strateji               [{ai_label} · {strat}]",
+                f"  7.  Ayarlar                     [tema:{theme} · scalp:{scalp} · lev:{lev}]",
+                f"  8.  Raporlar & Performans       [Sharpe · Sortino · PnL · geçmiş]",
+                f"  9.  Çıkış",
             ]
         return [
-            "  1.  Trading Terminal",
-            "  2.  Autonomous Control",
-            "  3.  Market & Data",
-            "  4.  Connections",
-            "  5.  Settings",
-            "  6.  Reports",
-            "  7.  Exit",
+            f"  1.  Trading Terminal            [commands · trades · alerts]",
+            f"  2.  Autonomous AI Mode          [{auto_label}]",
+            f"  3.  Backtest & Technical Anal.  [walk-forward · Monte Carlo · TA]",
+            f"  4.  Market & Watchlist          [prices · news · scan]",
+            f"  5.  Connections & API           [{ex_label}]",
+            f"  6.  AI & Strategy               [{ai_label} · {strat}]",
+            f"  7.  Settings                    [theme:{theme} · scalp:{scalp} · lev:{lev}]",
+            f"  8.  Reports & Performance       [Sharpe · Sortino · PnL · history]",
+            f"  9.  Exit",
         ]
+
+    def _tip_line(self) -> str:
+        cfg = self._cfg
+        lang = i18n.lang()
+        ex = getattr(cfg, "exchange", "binance")
+        mode = getattr(cfg, "trading_mode", "paper")
+        if ex == "binance":
+            on = bool(cfg.binance_key)
+        elif ex == "bybit":
+            on = bool(getattr(cfg, "bybit_key", ""))
+        elif ex == "okx":
+            on = bool(getattr(cfg, "okx_key", ""))
+        else:
+            on = False
+
+        if lang == "tr":
+            if not on:
+                return (f"  [dark_orange]→ {ex.upper()} bağlantısı yok. "
+                        "Menü 5 → API Key gir → Trading modunu seç.[/]")
+            return (f"  [green3]→ {ex.upper()} bağlı · Mod: {mode.upper()}[/]  "
+                    "[grey58]Borsa/mod için Menü 5.[/]")
+        if not on:
+            return (f"  [dark_orange]→ {ex.upper()} not connected. "
+                    "Menu 5 → Enter API Key → Choose mode.[/]")
+        return (f"  [green3]→ {ex.upper()} connected · Mode: {mode.upper()}[/]  "
+                "[grey58]Exchange/mode in Menu 5.[/]")
 
     def compose(self) -> ComposeResult:
         lang = i18n.lang()
-        welcome = (f"  Hoş geldin, {self._cfg.name}!" if lang == "tr"
-                   else f"  Welcome, {self._cfg.name}!")
-        hint = ("  ↑↓ seç   Enter aç   Q çıkış" if lang == "tr"
-                else "  ↑↓ select   Enter open   Q quit")
+        cfg = self._cfg
+        welcome = (f"  Hoş geldin, {cfg.name}!" if lang == "tr"
+                   else f"  Welcome, {cfg.name}!")
+        hint = ("  ↑↓ seç   Enter aç   1-9 hızlı   Q çıkış" if lang == "tr"
+                else "  ↑↓ select   Enter open   1-9 quick   Q quit")
         with Middle():
             with Center():
                 with Vertical(id="splash-box"):
                     yield Static(SPLASH_LOGO, id="splash-logo")
-                    yield Static(_build_status_chips(self._cfg), id="splash-chips")
+                    yield Static(_build_status_chips(cfg), id="splash-chips")
                     yield Static(welcome, id="splash-welcome")
+                    yield Static(self._tip_line(), id="splash-tip")
                     yield ListView(*[self._item(i) for i in self._menu_items()], id="splash-menu")
                     yield Static(hint, id="splash-hint")
 
@@ -344,14 +431,18 @@ class SplashMenuScreen(_MenuScreen):
         elif n == 2:
             self.app.push_screen(AutonomousControlScreen(self._cfg), self._on_sub)
         elif n == 3:
-            self.app.push_screen(MarketDataScreen(self._cfg, self._portfolio_summary), self._on_sub)
+            self.app.push_screen(AnalysisScreen(), self._on_sub)
         elif n == 4:
-            self.app.push_screen(ConnectionsScreen(self._cfg), self._on_sub)
+            self.app.push_screen(MarketDataScreen(self._cfg, self._portfolio_summary), self._on_sub)
         elif n == 5:
-            self.app.push_screen(SettingsScreen(self._cfg), self._on_sub)
+            self.app.push_screen(ConnectionsScreen(self._cfg), self._on_sub)
         elif n == 6:
-            self.app.push_screen(ReportsScreen(self._cfg, self._portfolio_summary), self._on_sub)
+            self.app.push_screen(ConnectionsScreen(self._cfg), self._on_sub)
         elif n == 7:
+            self.app.push_screen(SettingsScreen(self._cfg), self._on_sub)
+        elif n == 8:
+            self.app.push_screen(ReportsScreen(self._cfg, self._portfolio_summary), self._on_sub)
+        elif n == 9:
             self.dismiss("exit")
 
     def _on_sub(self, result) -> None:
@@ -363,6 +454,14 @@ class SplashMenuScreen(_MenuScreen):
             return
         try:
             self.query_one("#splash-chips", Static).update(_build_status_chips(self._cfg))
+        except Exception:
+            pass
+        try:
+            self._reload_list("splash-menu", self._menu_items())
+        except Exception:
+            pass
+        try:
+            self.query_one("#splash-tip", Static).update(self._tip_line())
         except Exception:
             pass
 
@@ -392,6 +491,12 @@ class SplashMenuScreen(_MenuScreen):
 
     def action_select_7(self) -> None:
         self._open_item(7)
+
+    def action_select_8(self) -> None:
+        self._open_item(8)
+
+    def action_select_9(self) -> None:
+        self._open_item(9)
 
 
 # ── SettingsScreen ────────────────────────────────────────────────────────────
@@ -688,22 +793,37 @@ class AutonomousSetupScreen(_AuthScreen):
         cur_mode = self._data["mode"]
 
         if step == "welcome":
+            is_live = bool(
+                getattr(self._cfg, "live_autonomous", False)
+                and getattr(self._cfg, "trading_mode", "paper") == "live"
+                and self._cfg.binance_key
+            )
             if lang == "tr":
+                mode_line = (
+                    "[bold white on red3]  ⚡ LIVE AUTONOMOUS — GERÇEK EMİR GÖNDERİLECEK  ![/]\n"
+                    "[grey58]/canli mod paper ile paper moduna dönebilirsin.[/]\n"
+                    if is_live else
+                    "[bold white on dark_orange]  ◈ PAPER MOD — TÜM İŞLEMLER SANAL  [/]\n"
+                    "[grey58]Gerçek emir için: /canli mod live[/]\n"
+                )
                 self.set_body(
-                    "[bold white on dark_red]  !  REAL_ORDER_DISABLED — TÜM İŞLEMLER PAPER  ![/]\n\n"
+                    f"{mode_line}\n"
                     "Otonom mod Claude AI kullanarak kripto piyasasını tarar ve\n"
-                    "[bold]YALNIZCA PAPER (sanal)[/] işlem açıp kapatır.\n\n"
-                    "API key bağlı olsa bile gerçek emir asla gönderilmez.\n"
-                    "Tüm PnL sanal bakiyeden hesaplanır, gerçek para riski yok.\n\n"
+                    "otomatik olarak işlem açıp kapatır.\n\n"
                     "[grey58]Devam: Enter   İptal: Esc[/]"
                 )
             else:
+                mode_line = (
+                    "[bold white on red3]  ⚡ LIVE AUTONOMOUS — REAL ORDERS WILL BE SENT  ![/]\n"
+                    "[grey58]Use /live mod paper to switch back to paper mode.[/]\n"
+                    if is_live else
+                    "[bold white on dark_orange]  ◈ PAPER MODE — ALL TRADES ARE SIMULATED  [/]\n"
+                    "[grey58]For real orders: /live mod live[/]\n"
+                )
                 self.set_body(
-                    "[bold white on dark_red]  !  REAL_ORDER_DISABLED — ALL OPERATIONS PAPER  ![/]\n\n"
+                    f"{mode_line}\n"
                     "Autonomous mode uses Claude AI to scan crypto markets and\n"
-                    "[bold]ONLY opens/closes PAPER (virtual)[/] trades.\n\n"
-                    "No real orders are sent even with API key connected.\n"
-                    "All PnL tracks virtual balance — no real money at risk.\n\n"
+                    "automatically open and close positions.\n\n"
                     "[grey58]Continue: Enter   Cancel: Esc[/]"
                 )
 
@@ -1262,36 +1382,64 @@ class ConnectionsScreen(_MenuScreen):
         self._cfg = cfg
         self._entering_api = False
         self._entering_secret = False
+        self._entering_passphrase = False
         self._temp_key = ""
+        self._temp_secret = ""
+
+    def _exchange_status(self) -> str:
+        cfg = self._cfg
+        ex = getattr(cfg, "exchange", "binance")
+        mode = getattr(cfg, "trading_mode", "paper")
+        if ex == "binance":
+            on = bool(cfg.binance_key)
+            key_hint = cfg.binance_key[:6] if on else ""
+        elif ex == "bybit":
+            on = bool(getattr(cfg, "bybit_key", ""))
+            key_hint = cfg.bybit_key[:6] if on else ""  # type: ignore[attr-defined]
+        elif ex == "okx":
+            on = bool(getattr(cfg, "okx_key", ""))
+            key_hint = cfg.okx_key[:6] if on else ""  # type: ignore[attr-defined]
+        else:
+            on, key_hint = False, ""
+        return (f"✓ {ex.upper()} · {key_hint}**** · {mode.upper()}"
+                if on else f"✗ {ex.upper()} · BAĞLANMADI")
 
     def _items(self) -> list[str]:
         lang = i18n.lang()
         cfg = self._cfg
         claude_ok = shutil.which("claude") is not None
-        binance_on = bool(cfg.binance_key)
-        claude_st = "✓ CONNECTED" if claude_ok else "✗ DISCONNECTED"
-        binance_st = f"ON [{cfg.binance_key[:4]}****]" if binance_on else "OFF"
-        if lang == "tr":
+        mode = getattr(cfg, "trading_mode", "paper")
+        ex = getattr(cfg, "exchange", "binance")
+        provider = getattr(cfg, "ai_provider", "claude")
+        ai_st = "✓ BAĞLI" if claude_ok else "✗ BULUNAMADI"
+        ex_st = self._exchange_status()
+        if lang != "en":
+            mode_action = ("→ PAPER moda geç" if mode == "live" else "→ LIVE moda geç")
             return [
-                f"  Claude Durumu               [{claude_st}]",
-                f"  Claude Modeli Seç           [{cfg.model}]",
-                f"  Binance Read-Only Bağlantı  [{binance_st}]",
-                "  Binance Bağlantısını Kes",
-                "  Canlı Güvenlik Durumu       →",
+                f"  AI Sağlayıcı                [{provider.upper()} · {ai_st}]",
+                "  AI Modelini Değiştir        (/model komutu — terminal)",
+                f"  Borsa Seç                   [{ex.upper()} — Binance / Bybit / OKX]",
+                f"  Borsa API Bağlantısı        [{ex_st}]",
+                f"  Trading Modu Değiştir       [{mode.upper()} — {mode_action}]",
+                "  Bağlantıyı Kes",
+                "  Güvenlik & Mod Durumu       →",
                 "  ← Geri",
             ]
+        mode_action_en = ("→ switch to PAPER" if mode == "live" else "→ switch to LIVE")
         return [
-            f"  Claude Status               [{claude_st}]",
-            f"  Select Claude Model         [{cfg.model}]",
-            f"  Binance Read-Only Connect   [{binance_st}]",
-            "  Disconnect Binance",
-            "  Live Safety Status          →",
+            f"  AI Provider                 [{provider.upper()} · {ai_st}]",
+            "  Change AI Model             (/model command — in terminal)",
+            f"  Select Exchange             [{ex.upper()} — Binance / Bybit / OKX]",
+            f"  Exchange API Connection     [{ex_st}]",
+            f"  Switch Trading Mode         [{mode.upper()} — {mode_action_en}]",
+            "  Disconnect",
+            "  Safety & Mode Status        →",
             "  ← Back",
         ]
 
     def compose(self) -> ComposeResult:
         lang = i18n.lang()
-        title = "──  BAĞLANTILAR  ──" if lang == "tr" else "──  CONNECTIONS  ──"
+        title = "──  BAĞLANTILAR & MOD  ──" if lang == "tr" else "──  CONNECTIONS & MODE  ──"
         hint = "↑↓ seç   Enter aç   Esc geri" if lang == "tr" else "↑↓ select   Enter open   Esc back"
         with Middle():
             with Center():
@@ -1310,112 +1458,281 @@ class ConnectionsScreen(_MenuScreen):
         idx = event.list_view.index or 0
         lang = i18n.lang()
         cfg = self._cfg
-        if idx == 0:  # Claude status
-            import shutil as _shutil
-            found = _shutil.which("claude") is not None
+        if idx == 0:  # AI provider durum
+            provider = getattr(cfg, "ai_provider", "claude")
+            found = shutil.which("claude") is not None if provider == "claude" else True
             if lang == "tr":
-                detail = (f"  claude CLI: {'bulundu ✓' if found else 'bulunamadı ✗'}\n"
-                          f"  Seçili model: {cfg.model}\n"
-                          f"  Not: PATH'de 'claude' komutu olmalı.")
+                detail = (
+                    f"  Aktif AI:  [bold]{provider.upper()}[/]\n"
+                    f"  Claude CLI: {'bulundu ✓' if found else 'bulunamadı ✗'}\n"
+                    f"  Değiştirmek için terminale: [bold]/model claude|openai|gemini|ollama|grok[/]\n"
+                    f"  API key kaydetmek için: [bold]/model key openai|gemini|grok API_KEY[/]"
+                )
             else:
-                detail = (f"  claude CLI: {'found ✓' if found else 'not found ✗'}\n"
-                          f"  Selected model: {cfg.model}\n"
-                          f"  Note: 'claude' command must be in PATH.")
+                detail = (
+                    f"  Active AI:  [bold]{provider.upper()}[/]\n"
+                    f"  Claude CLI: {'found ✓' if found else 'not found ✗'}\n"
+                    f"  To switch: [bold]/model claude|openai|gemini|ollama|grok[/]\n"
+                    f"  To set key: [bold]/model key openai|gemini|grok API_KEY[/]"
+                )
             self._safe_update("conn-detail", detail)
-        elif idx == 1:  # Claude model
-            mc = ["sonnet", "opus", "haiku", "varsayilan"]
-            cur = cfg.model if cfg.model in mc else "sonnet"
-            cfg.model = mc[(mc.index(cur) + 1) % len(mc)]
+        elif idx == 1:  # AI model bilgi
+            if lang == "tr":
+                self._safe_update("conn-detail",
+                    "  Terminal'de [bold]/model[/] yazarak tüm AI seçeneklerini gör.\n"
+                    "  Örnek: [bold]/model openai gpt-4o[/]   [bold]/model ollama llama3.2[/]")
+            else:
+                self._safe_update("conn-detail",
+                    "  Type [bold]/model[/] in terminal to see all AI options.\n"
+                    "  Example: [bold]/model openai gpt-4o[/]   [bold]/model ollama llama3.2[/]")
+        elif idx == 2:  # Borsa seç (döngüsel)
+            _exchanges = ["binance", "bybit", "okx"]
+            cur_ex = getattr(cfg, "exchange", "binance")
+            next_ex = _exchanges[(_exchanges.index(cur_ex) + 1) % len(_exchanges)] if cur_ex in _exchanges else "binance"
+            cfg.exchange = next_ex
             cfg.save()
-            self._flash_msg("conn-msg", f"✓ Claude: {cfg.model}")
+            self._flash_msg("conn-msg", f"✓ Borsa: {next_ex.upper()}")
+            _instructions = {
+                "binance": ("Binance API Management → 'Enable Spot & Margin Trading'" if lang == "tr"
+                            else "Binance API Management → 'Enable Spot & Margin Trading'"),
+                "bybit": ("Bybit API Management → Unified Trading: Read + Orders" if lang == "tr"
+                          else "Bybit API Management → Unified Trading: Read + Orders"),
+                "okx": ("OKX API → Read + Trade izni + Passphrase belirle\n"
+                        "  Bağlantı: /canli bagla KEY SECRET PASSPHRASE" if lang == "tr"
+                        else "OKX API → Read + Trade permission + set Passphrase\n"
+                             "  Connect: /live bagla KEY SECRET PASSPHRASE"),
+            }.get(next_ex, "")
+            self._safe_update("conn-detail", f"  [cyan]{_instructions}[/]")
             self._reload_list("conn-list", self._items())
-        elif idx == 2:  # Binance connect
+        elif idx == 3:  # Exchange API bağlantı
             self._entering_api = True
             self._entering_secret = False
+            ex = getattr(cfg, "exchange", "binance")
             inp = self.query_one("#conn-input", Input)
             inp.password = False
-            inp.placeholder = "Binance API Key (Read-Only only)"
+            inp.placeholder = f"{ex.upper()} API Key"
             inp.remove_class("hidden")
-            if lang == "tr":
-                self._safe_update("conn-detail",
-                    "[bold dark_orange]UYARI:[/] Sadece Read-Only key girin!\n"
-                    "Trade/withdraw/margin izni OLMAYAN key kullanın.\n"
-                    "Secret bir sonraki adımda girilecek — asla görüntülenmez.")
-            else:
-                self._safe_update("conn-detail",
-                    "[bold dark_orange]WARNING:[/] Enter Read-Only API key only!\n"
-                    "Use a key WITHOUT trade/withdraw/margin permissions.\n"
-                    "Secret will be asked next — never displayed.")
+            _ex_guide = {
+                "binance": (
+                    "[bold cyan]Binance API Key girin.[/]\n"
+                    "  ✔ Enable Spot & Margin Trading iznini aç\n"
+                    "  ✗ Withdraw iznini AÇMA  ✔ IP kısıtlaması ekle\n"
+                    "Secret bir sonraki adımda — maskelenir."
+                    if lang == "tr" else
+                    "[bold cyan]Enter Binance API Key.[/]\n"
+                    "  ✔ Enable Spot & Margin Trading\n"
+                    "  ✗ No Withdrawals  ✔ Add IP restriction\n"
+                    "Secret next — masked."
+                ),
+                "bybit": (
+                    "[bold cyan]Bybit API Key girin.[/]\n"
+                    "  ✔ Unified Trading: Read + Orders\n"
+                    "  ✗ Withdraw iznini AÇMA\n"
+                    "Secret bir sonraki adımda — maskelenir."
+                    if lang == "tr" else
+                    "[bold cyan]Enter Bybit API Key.[/]\n"
+                    "  ✔ Unified Trading: Read + Orders\n"
+                    "  ✗ No Withdrawals\n"
+                    "Secret next — masked."
+                ),
+                "okx": (
+                    "[bold cyan]OKX API Key girin.[/]\n"
+                    "  ✔ Read + Trade izni\n"
+                    "  ✗ Withdraw iznini AÇMA\n"
+                    "Secret, sonra Passphrase girilecek — maskelenir."
+                    if lang == "tr" else
+                    "[bold cyan]Enter OKX API Key.[/]\n"
+                    "  ✔ Read + Trade permission\n"
+                    "  ✗ No Withdrawals\n"
+                    "Secret then Passphrase will be asked — masked."
+                ),
+            }.get(ex, "[bold cyan]API Key girin.[/]")
+            self._safe_update("conn-detail", _ex_guide)
             inp.focus()
-        elif idx == 3:  # Disconnect
-            cfg.binance_key = ""
-            cfg.binance_secret = ""
+        elif idx == 4:  # Trading mode toggle
+            self.run_worker(self._toggle_trading_mode(), exclusive=True)
+        elif idx == 5:  # Bağlantıyı kes
+            ex = getattr(cfg, "exchange", "binance")
+            if ex == "binance":
+                cfg.binance_key = ""
+                cfg.binance_secret = ""
+            elif ex == "bybit":
+                cfg.bybit_key = ""  # type: ignore[attr-defined]
+                cfg.bybit_secret = ""  # type: ignore[attr-defined]
+            elif ex == "okx":
+                cfg.okx_key = ""  # type: ignore[attr-defined]
+                cfg.okx_secret = ""  # type: ignore[attr-defined]
+                cfg.okx_passphrase = ""  # type: ignore[attr-defined]
+            cfg.trading_mode = "paper"
             cfg.save()
-            self._flash_msg("conn-msg", "✓ Binance bağlantısı kesildi." if lang == "tr" else "✓ Binance disconnected.")
+            msg = (f"✓ {ex.upper()} bağlantısı kesildi, paper moda dönüldü." if lang == "tr"
+                   else f"✓ {ex.upper()} disconnected, switched to paper mode.")
+            self._flash_msg("conn-msg", msg)
             self._safe_update("conn-detail", "")
             self._reload_list("conn-list", self._items())
-        elif idx == 4:  # Safety
+        elif idx == 6:  # Safety
             self.app.push_screen(SafetyStatusScreen(), self._on_sub)
-        elif idx == 5:
+        elif idx == 7:
             self.dismiss(None)
+
+    async def _toggle_trading_mode(self) -> None:
+        import exchange as _exchange
+        lang = i18n.lang()
+        cfg = self._cfg
+        ex = getattr(cfg, "exchange", "binance")
+        cur = getattr(cfg, "trading_mode", "paper")
+
+        # Aktif borsa için key kontrolü
+        _key = {
+            "binance": cfg.binance_key,
+            "bybit": getattr(cfg, "bybit_key", ""),
+            "okx": getattr(cfg, "okx_key", ""),
+        }.get(ex, "")
+        _secret = {
+            "binance": cfg.binance_secret,
+            "bybit": getattr(cfg, "bybit_secret", ""),
+            "okx": getattr(cfg, "okx_secret", ""),
+        }.get(ex, "")
+        _extra = getattr(cfg, "okx_passphrase", "") if ex == "okx" else ""
+
+        if not _key:
+            msg = (f"Önce {ex.upper()} API bağlantısı gerekli (seçenek 4)."
+                   if lang == "tr" else
+                   f"Connect {ex.upper()} API first (option 4).")
+            self._safe_update("conn-detail", f"[dark_orange]{msg}[/]")
+            return
+
+        if cur == "paper":
+            self._safe_update("conn-detail",
+                f"[grey58]{ex.upper()}'de işlem izni kontrol ediliyor...[/]" if lang == "tr" else
+                f"[grey58]Checking trading permission on {ex.upper()}...[/]")
+            try:
+                can_trade = await _exchange.check_trading_permission(_key, _secret, _extra)
+            except Exception as e:
+                self._safe_update("conn-detail", f"[red3]Hata: {e}[/]")
+                return
+            if not can_trade:
+                self._safe_update("conn-detail",
+                    f"[red3]Hesabın 'Spot Trading' izni yok!\n"
+                    f"{ex.upper()} API ayarlarından Trade iznini aç.[/]" if lang == "tr" else
+                    f"[red3]Account has no 'Spot Trading' permission!\n"
+                    f"Enable Trade permission in {ex.upper()} API settings.[/]")
+                return
+            cfg.trading_mode = "live"
+            cfg.save()
+            self._flash_msg("conn-msg",
+                f"[green3]✓ LIVE moda geçildi — gerçek emirler {ex.upper()}'e gidecek![/]" if lang == "tr" else
+                f"[green3]✓ Switched to LIVE mode — real orders will go to {ex.upper()}![/]", delay=5.0)
+        else:
+            cfg.trading_mode = "paper"
+            cfg.save()
+            self._flash_msg("conn-msg",
+                "[dark_orange]✓ PAPER moda döndü — emirler simüle edilir.[/]" if lang == "tr" else
+                "[dark_orange]✓ Back to PAPER mode — orders are simulated.[/]")
+        self._safe_update("conn-detail", "")
+        self._reload_list("conn-list", self._items())
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
         val = event.value.strip()
         event.input.value = ""
         lang = i18n.lang()
+        ex = getattr(self._cfg, "exchange", "binance")
+        inp = self.query_one("#conn-input", Input)
+
         if self._entering_api:
             self._temp_key = val
             self._entering_api = False
             self._entering_secret = True
-            inp = self.query_one("#conn-input", Input)
-            inp.password = True  # MASKED
-            inp.placeholder = "Binance Secret (masked — not stored in logs)"
+            inp.password = True
+            inp.placeholder = f"{ex.upper()} Secret (maskelenir)"
             self._safe_update("conn-detail",
                 "[bold dark_orange]SECRET maskelenmiş.[/]\n"
-                "Secret girin. Log veya ekranda gösterilmez." if lang == "tr" else
+                "Secret girin — log veya ekranda gösterilmez." if lang == "tr" else
                 "[bold dark_orange]SECRET is masked.[/]\n"
-                "Enter secret. Never shown in logs or display.")
+                "Enter secret — never shown in logs or display.")
             inp.focus()
+
         elif self._entering_secret:
-            self._entering_secret = False
-            secret_val = val  # immediately use and discard
-            if self._temp_key and secret_val:
-                self._cfg.binance_key = self._temp_key
-                self._cfg.binance_secret = secret_val
-                self._cfg.save()
-                self._temp_key = ""
-                # secret_val goes out of scope — do NOT log or display it
-                inp = self.query_one("#conn-input", Input)
-                inp.password = False
-                inp.add_class("hidden")
-                self._flash_msg("conn-msg", "✓ Binance API kaydedildi." if lang == "tr" else "✓ Binance API saved.")
-                self._safe_update("conn-detail", "")
-                self._reload_list("conn-list", self._items())
+            self._temp_secret = val
+            if ex == "okx":
+                # OKX için 3. adım: passphrase
+                self._entering_secret = False
+                self._entering_passphrase = True
+                inp.password = True
+                inp.placeholder = "OKX Passphrase (maskelenir)"
+                self._safe_update("conn-detail",
+                    "[bold dark_orange]PASSPHRASE maskelenmiş.[/]\n"
+                    "API oluştururken belirlediğin passphrase'i gir." if lang == "tr" else
+                    "[bold dark_orange]PASSPHRASE is masked.[/]\n"
+                    "Enter the passphrase you set when creating the API key.")
+                inp.focus()
             else:
-                self._temp_key = ""
-                inp = self.query_one("#conn-input", Input)
-                inp.password = False
-                inp.add_class("hidden")
-                self._flash_msg("conn-msg", "✗ Boş olamaz." if lang == "tr" else "✗ Cannot be empty.")
-            try:
-                self.query_one("#conn-list", ListView).focus()
-            except Exception:
-                pass
+                self._entering_secret = False
+                self._save_exchange_keys(ex, self._temp_key, val, "", lang)
+
+        elif getattr(self, "_entering_passphrase", False):
+            self._entering_passphrase = False
+            self._save_exchange_keys(ex, self._temp_key, getattr(self, "_temp_secret", ""), val, lang)
+
         else:
-            event.input.add_class("hidden")
+            inp.add_class("hidden")
             try:
                 self.query_one("#conn-list", ListView).focus()
             except Exception:
                 pass
 
+    def _save_exchange_keys(self, ex: str, key: str, secret: str,
+                            passphrase: str, lang: str) -> None:
+        cfg = self._cfg
+        inp = self.query_one("#conn-input", Input)
+        if not key or not secret:
+            inp.password = False
+            inp.add_class("hidden")
+            self._flash_msg("conn-msg", "✗ Boş olamaz." if lang == "tr" else "✗ Cannot be empty.")
+            try:
+                self.query_one("#conn-list", ListView).focus()
+            except Exception:
+                pass
+            return
+        if ex == "binance":
+            cfg.binance_key = key
+            cfg.binance_secret = secret
+        elif ex == "bybit":
+            cfg.bybit_key = key  # type: ignore[attr-defined]
+            cfg.bybit_secret = secret  # type: ignore[attr-defined]
+        elif ex == "okx":
+            if not passphrase:
+                self._flash_msg("conn-msg", "✗ OKX passphrase boş olamaz." if lang == "tr"
+                                else "✗ OKX passphrase cannot be empty.")
+                return
+            cfg.okx_key = key  # type: ignore[attr-defined]
+            cfg.okx_secret = secret  # type: ignore[attr-defined]
+            cfg.okx_passphrase = passphrase  # type: ignore[attr-defined]
+        cfg.save()
+        self._temp_key = ""
+        self._temp_secret = ""  # type: ignore[attr-defined]
+        inp.password = False
+        inp.add_class("hidden")
+        self._flash_msg("conn-msg",
+                        f"✓ {ex.upper()} API kaydedildi." if lang == "tr"
+                        else f"✓ {ex.upper()} API saved.")
+        self._safe_update("conn-detail", "")
+        self._reload_list("conn-list", self._items())
+        try:
+            self.query_one("#conn-list", ListView).focus()
+        except Exception:
+            pass
+
     def on_key(self, event) -> None:
         if event.key == "escape":
-            if self._entering_api or self._entering_secret:
+            if self._entering_api or self._entering_secret or self._entering_passphrase:
                 event.stop()
                 self._entering_api = False
                 self._entering_secret = False
+                self._entering_passphrase = False
                 self._temp_key = ""
+                self._temp_secret = ""
                 try:
                     inp = self.query_one("#conn-input", Input)
                     inp.value = ""
@@ -1439,33 +1756,45 @@ class ConnectionsScreen(_MenuScreen):
 
 class SafetyStatusScreen(_MenuScreen):
     def compose(self) -> ComposeResult:
+        from config import current as _cur_cfg
+        try:
+            _cfg = _cur_cfg()
+            trading_mode = getattr(_cfg, "trading_mode", "paper")
+            live_auto = getattr(_cfg, "live_autonomous", False)
+        except Exception:
+            trading_mode, live_auto = "paper", False
+
         lang = i18n.lang()
-        title = "──  CANLI GÜVENLİK DURUMU  ──" if lang == "tr" else "──  LIVE SAFETY STATUS  ──"
+        title = "──  TRADING GÜVENLİK DURUMU  ──" if lang == "tr" else "──  TRADING SAFETY STATUS  ──"
+        mode_color = "green3" if trading_mode == "live" else "dark_orange"
+        auto_color = "red3" if live_auto else "dark_orange"
         if lang == "tr":
             content = (
-                "[bold white on dark_red]  Real Orders: OFF        [/]  "
-                "[bold white on dark_red]  Withdraw: NOT SUPPORTED  [/]\n\n"
-                "[bold white on dark_red]  Futures: DISABLED        [/]  "
-                "[bold white on dark_red]  Margin: DISABLED         [/]\n\n"
-                "[bold white on dark_red]  Order API: BLOCKED       [/]  "
-                "[bold black on green3]   Paper Mode: ACTIVE       [/]\n\n"
-                "[bold cyan]Bu uygulama YALNIZCA PAPER (sanal) işlem yapar.[/]\n"
-                "create_order, futures_create_order, margin borrow, withdraw\n"
-                "çağrıları REAL_ORDER_DISABLED hatası fırlatır.\n\n"
-                "[grey58]Bu koruma kodu içinde hard-coded'dir, devre dışı bırakılamaz.[/]"
+                f"[bold black on {mode_color}]  Trading Modu: {trading_mode.upper():<12}[/]  "
+                f"[bold black on {auto_color}]  Otonom Emirler: {'GERÇEK' if live_auto else 'PAPER':<12}[/]\n\n"
+                "[bold white on dark_red]  Futures: DESTEKLENMEZ    [/]  "
+                "[bold white on dark_red]  Margin: DESTEKLENMEZ     [/]\n\n"
+                "[bold white on dark_red]  Withdraw: DESTEKLENMEZ   [/]  "
+                "[bold black on green3]   Spot Emirler: Binance API [/]\n\n"
+                f"[bold cyan]Aktif mod: {trading_mode.upper()}[/]\n"
+                "Paper: tüm işlemler sanal bakiyede simüle edilir.\n"
+                "Live: spot emirler Binance API üzerinden gönderilir.\n"
+                "Kaldıraç ve short yalnızca paper modunda çalışır.\n\n"
+                "[grey58]/canli mod live|paper ile mod değiştirilir.[/]"
             )
         else:
             content = (
-                "[bold white on dark_red]  Real Orders: OFF        [/]  "
-                "[bold white on dark_red]  Withdraw: NOT SUPPORTED  [/]\n\n"
-                "[bold white on dark_red]  Futures: DISABLED        [/]  "
-                "[bold white on dark_red]  Margin: DISABLED         [/]\n\n"
-                "[bold white on dark_red]  Order API: BLOCKED       [/]  "
-                "[bold black on green3]   Paper Mode: ACTIVE       [/]\n\n"
-                "[bold cyan]This app executes PAPER (virtual) trades ONLY.[/]\n"
-                "create_order, futures_create_order, margin borrow, withdraw\n"
-                "calls raise REAL_ORDER_DISABLED error.\n\n"
-                "[grey58]This protection is hard-coded and cannot be disabled.[/]"
+                f"[bold black on {mode_color}]  Trading Mode: {trading_mode.upper():<12}[/]  "
+                f"[bold black on {auto_color}]  Auto Orders: {'REAL' if live_auto else 'PAPER':<12}[/]\n\n"
+                "[bold white on dark_red]  Futures: NOT SUPPORTED   [/]  "
+                "[bold white on dark_red]  Margin: NOT SUPPORTED    [/]\n\n"
+                "[bold white on dark_red]  Withdraw: NOT SUPPORTED  [/]  "
+                "[bold black on green3]   Spot Orders: Binance API  [/]\n\n"
+                f"[bold cyan]Active mode: {trading_mode.upper()}[/]\n"
+                "Paper: all trades are simulated on virtual balance.\n"
+                "Live: spot orders are sent via Binance API.\n"
+                "Leverage and short are paper-only.\n\n"
+                "[grey58]Use /live mod live|paper to switch modes.[/]"
             )
         hint = "Esc geri" if lang == "tr" else "Esc back"
         with Middle():
@@ -1691,3 +2020,65 @@ class RecommendationsScreen(_MenuScreen):
 
     def action_go_back(self) -> None:
         self.dismiss(None)
+
+
+# ── AnalysisScreen: Backtest & TA komut referansı ─────────────────────────────
+
+class AnalysisScreen(_MenuScreen):
+    """Backtest & Teknik Analiz komutlarına hızlı referans."""
+
+    def _items(self) -> list[str]:
+        lang = i18n.lang()
+        if lang == "tr":
+            return [
+                "  /ta BTC 1h              → Teknik analiz (RSI/MACD/BB/EMA/ADX)",
+                "  /ta BTC 4h              → Farklı zaman dilimi analizi",
+                "  /mtf BTC                → 4 zaman dilimi konsensüs (15m/1h/4h/1d)",
+                "  /backtest BTC 1h 30     → 30 günlük backtest",
+                "  /backtest wf BTC 1h 90  → Walk-forward (%70/%30 in/out-sample)",
+                "  /backtest mc BTC 1h 30  → Monte Carlo (200 simülasyon)",
+                "  /backtest scan 1h 30    → Tüm izleme listesini tara",
+                "  /strateji momentum      → Strateji: momentum/dönüş/kırılım/konsensüs",
+                "  /boyut BTC 2.5          → Pozisyon boyutu hesapla (%2.5 stop)",
+                "  /risk                   → Portföy heat & korelasyon raporu",
+                "  /fiyat BTC 95000 al     → Fiyat alarmı + otomatik al",
+                "  ← Geri",
+            ]
+        return [
+            "  /ta BTC 1h              → Technical analysis (RSI/MACD/BB/EMA/ADX)",
+            "  /ta BTC 4h              → Different timeframe analysis",
+            "  /mtf BTC                → 4 timeframe consensus (15m/1h/4h/1d)",
+            "  /backtest BTC 1h 30     → 30-day backtest",
+            "  /backtest wf BTC 1h 90  → Walk-forward (70%/30% in/out-sample)",
+            "  /backtest mc BTC 1h 30  → Monte Carlo (200 simulations)",
+            "  /backtest scan 1h 30    → Scan entire watchlist",
+            "  /strateji momentum      → Strategy: momentum/dönüş/kırılım/konsensüs",
+            "  /boyut BTC 2.5          → Position size calculator (2.5% stop)",
+            "  /risk                   → Portfolio heat & correlation report",
+            "  /fiyat BTC 95000 al     → Price alert + auto buy",
+            "  ← Back",
+        ]
+
+    def compose(self) -> ComposeResult:
+        lang = i18n.lang()
+        title = "──  BACKTEST & TEKNİK ANALİZ  ──" if lang == "tr" else "──  BACKTEST & TECHNICAL ANALYSIS  ──"
+        sub = ("  Komutları terminalde kullan." if lang == "tr"
+               else "  Use these commands in the terminal.")
+        hint = "Enter → terminale geç   Esc geri" if lang == "tr" else "Enter → go to terminal   Esc back"
+        with Middle():
+            with Center():
+                with Vertical(id="analysis-box"):
+                    yield Static(title, id="analysis-title")
+                    yield Static(sub, id="analysis-sub")
+                    yield ListView(*[self._item(i) for i in self._items()], id="analysis-list")
+                    yield Static(hint, id="analysis-hint")
+
+    def on_mount(self) -> None:
+        self.query_one("#analysis-list", ListView).focus()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        idx = event.list_view.index or 0
+        if idx == len(self._items()) - 1:
+            self.dismiss(None)
+        else:
+            self.dismiss("trade")

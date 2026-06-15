@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+
+# Kişisel veri — commit etme
+config.json
+account.json
+autonomous_state.json
+autonomous_log.jsonl
+recommendations.json
+watchlist.json
+.env
+
+# Geçici
+*.tmp
+*.log
+.DS_Store

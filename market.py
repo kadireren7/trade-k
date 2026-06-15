@@ -138,6 +138,10 @@ def is_yahoo(symbol: str) -> bool:
     return any(c in symbol for c in "=^.")
 
 
+def is_crypto(symbol: str) -> bool:
+    return not is_yahoo(symbol)
+
+
 def resolve_symbol(name: str) -> str:
     name = name.upper().strip().lstrip("/")
     _COMMON_NAMES = {
@@ -268,16 +272,25 @@ class MarketFeed:
     async def _prime_yahoo(self, client: httpx.AsyncClient, ysym: str) -> None:
         self.tickers[ysym] = await _yahoo_quote(client, ysym)
 
+    def is_stale(self, symbol: str, max_age: float = 30.0) -> bool:
+        """Sembolün fiyat verisinin eski olup olmadığını kontrol et."""
+        t = self.tickers.get(symbol)
+        if not t or t.last_updated == 0:
+            return True
+        return time.time() - t.last_updated > max_age
+
     async def _ws_loop(self) -> None:
         syms = self.crypto_symbols
         if not syms:
             return
         streams = "/".join(f"{s.lower()}@miniTicker" for s in syms)
         url = f"{WS}?streams={streams}"
+        backoff = 2
         while True:
             try:
                 async with websockets.connect(url, ping_interval=20) as ws:
                     self.ws_connected = True
+                    backoff = 2  # başarılı bağlantıda sıfırla
                     async for raw in ws:
                         d = json.loads(raw).get("data", {})
                         sym = d.get("s")
@@ -299,7 +312,8 @@ class MarketFeed:
                 return
             except Exception:
                 self.ws_connected = False
-                await asyncio.sleep(3)  # kopunca yeniden bağlan
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 60)
 
     async def _yahoo_loop(self) -> None:
         """Yahoo enstrümanlarını ~5 saniyede bir yenile."""
@@ -360,17 +374,46 @@ async def fetch_klines(symbol: str, interval: str = "1h", limit: int = 48) -> li
         ]
 
 
+async def get_spread(symbol: str) -> tuple[float, float, float]:
+    """Binance order book'tan bid/ask ve spread yüzdesi çek.
+
+    Returns: (bid, ask, spread_pct)
+    Sadece Binance kriptolar için kullanılabilir.
+    """
+    async with httpx.AsyncClient(timeout=8) as c:
+        r = await c.get(f"{REST}/ticker/bookTicker", params={"symbol": symbol})
+        r.raise_for_status()
+        d = r.json()
+        bid = float(d["bidPrice"])
+        ask = float(d["askPrice"])
+        spread_pct = (ask - bid) / bid * 100 if bid > 0 else 0.0
+        return bid, ask, round(spread_pct, 4)
+
+
 async def quote(symbol: str) -> float:
     """Tek seferlik güncel fiyat (watchlist dışı semboller için)."""
     if is_yahoo(symbol):
         async with httpx.AsyncClient(timeout=10) as client:
             return (await _yahoo_quote(client, symbol)).price
-    klines = await fetch_klines(symbol, "1m", 1)
-    return klines[-1]["c"]
+    async with httpx.AsyncClient(timeout=8) as client:
+        r = await client.get(f"{REST}/ticker/bookTicker", params={"symbol": symbol})
+        r.raise_for_status()
+        d = r.json()
+        bid = float(d["bidPrice"])
+        ask = float(d["askPrice"])
+        return (bid + ask) / 2
+
+
+_top_movers_cache: tuple[float, list[dict]] = (0.0, [])
+_TOP_MOVERS_TTL = 300  # 5 dakika
 
 
 async def fetch_top_movers(limit: int = 12) -> list[dict]:
-    """Kripto taraması: hacimli USDT paritelerinde en çok hareket edenler."""
+    """Kripto taraması: hacimli USDT paritelerinde en çok hareket edenler (5dk cache)."""
+    global _top_movers_cache
+    ts, cached = _top_movers_cache
+    if cached and time.time() - ts < _TOP_MOVERS_TTL:
+        return cached[:limit]
     async with httpx.AsyncClient(timeout=15) as client:
         r = await client.get(f"{REST}/ticker/24hr")
         r.raise_for_status()
@@ -381,12 +424,14 @@ async def fetch_top_movers(limit: int = 12) -> list[dict]:
             and not any(x in t["symbol"] for x in ("UP", "DOWN", "BULL", "BEAR"))
         ]
         rows.sort(key=lambda t: abs(float(t["priceChangePercent"])), reverse=True)
-        return [
+        result = [
             {"symbol": t["symbol"], "price": float(t["lastPrice"]),
              "change_pct": float(t["priceChangePercent"]),
              "volume_usdt": float(t["quoteVolume"])}
-            for t in rows[:limit]
+            for t in rows[:50]
         ]
+    _top_movers_cache = (time.time(), result)
+    return result[:limit]
 
 
 # Kategori bazlı piyasa listeleri
@@ -396,6 +441,48 @@ SCAN_ENDEKS = ["^GSPC", "NQ=F", "^DJI", "^GDAXI", "XU100.IS"]
 
 # /tara sırasında Claude'a sunulan ve GLOBAL panelde gösterilen kripto dışı evren
 SCAN_INSTRUMENTS = SCAN_EMTIA + SCAN_FOREX + SCAN_ENDEKS
+
+# Otonom mod kripto evreni — çeşitlendirilmiş, likit Binance çiftleri
+AUTONOMOUS_CRYPTO_UNIVERSE = [
+    # Mega cap
+    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+    # Large cap
+    "AVAXUSDT", "DOGEUSDT", "LINKUSDT", "DOTUSDT", "MATICUSDT",
+    "ADAUSDT", "LTCUSDT", "UNIUSDT", "ATOMUSDT", "NEARUSDT",
+    "TRXUSDT", "ICPUSDT", "APTUSDT", "XLMUSDT", "ETCUSDT",
+    "FILUSDT", "HBARUSDT", "LDOUSDT", "QNTUSDT", "CROUSDT",
+    # Mid cap momentum
+    "SUIUSDT", "ARBUSDT", "OPUSDT", "INJUSDT", "TIAUSDT",
+    "SEIUSDT", "WIFUSDT", "FETUSDT", "RENDERUSDT", "JUPUSDT",
+    "BONKUSDT", "MEMEUSDT", "PEPEUSDT", "FLOKIUSDT", "SHIBUSDT",
+    "WLDUSDT", "STRKUSDT", "PYTHUSDT", "ALTUSDT", "DYMUSDT",
+    "ONDOUSDT", "EIGENUSDT", "MOVEUSDT", "ZROUSDT", "KAIAUSDT",
+    # DeFi
+    "AAVEUSDT", "MKRUSDT", "SNXUSDT", "CRVUSDT", "COMPUSDT",
+    "YFIUSDT", "1INCHUSDT", "RUNEUSDT", "DYDXUSDT", "GMXUSDT",
+    "PENDLEUSDT", "ENAUSDT", "ETHFIUSDT", "REZUSDT", "EZUSDT",
+    # Layer 1 / Layer 2
+    "FTMUSDT", "ALGOUSDT", "EGLDUSDT", "XTZUSDT", "FLOWUSDT",
+    "KASUSDT", "MINAUSDT", "KAVAUSDT", "IOTAUSDT",
+    "ZILUSDT", "ONTUSDT", "VETUSDT", "NEOUSDT", "WAVESUSDT",
+    "BTTCUSDT", "STXUSDT", "CFXUSDT", "COREUSDT", "BEAMUSDT",
+    # Gaming / NFT / Metaverse
+    "SANDUSDT", "MANAUSDT", "AXSUSDT", "GALAUSDT", "ILVUSDT",
+    "YGGUSDT", "PIXELUSDT", "RONUSDT", "IMXUSDT", "BLURUSDT",
+    # AI / Data
+    "TAOUSDT", "AGIXUSDT", "OCEANUSDT", "GRTUSDT", "NMRUSDT",
+    "CTXCUSDT", "RNDRUSDT", "AIUSDT",
+    # Infrastructure
+    "STORJUSDT", "AKASHUSDT", "ARPAUSDT", "POWRUSDT", "OMUSDT",
+    "WANUSDT", "CELRUSDT", "CTSIUSDT", "REQUSDT", "BANDUSDT",
+    # Exchange tokens
+    "OKBUSDT", "HTUSDT", "KCSUSDT",
+    # Other liquid pairs
+    "XMRUSDT", "DASHUSDT", "ZECUSDT", "BCHUSDT", "EOSUSDT",
+    "RVNUSDT", "COTIUSDT", "STPTUSDT", "TUSDT", "NKNUSDT",
+    "ASTRUSDT", "LOOMUSDT", "IDUSDT", "EDUUSDT", "ACEUSDT",
+    "PORTALUSDT", "AEVOLUSDT", "WUSDT", "MYROUSDT",
+]
 
 
 def instruments_for_category(category: str) -> list[str]:

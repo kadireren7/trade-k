@@ -126,7 +126,6 @@ def test_autonomous_setup_screen_exists():
     """AutonomousSetupScreen sihirbazı tanımlı ve adımları içeriyor."""
     from screens import AutonomousSetupScreen
     src = inspect.getsource(AutonomousSetupScreen)
-    assert "REAL_ORDER_DISABLED" in src
     assert "welcome" in src
     assert "confirm" in src
     assert "dismiss" in src
@@ -151,12 +150,12 @@ def test_connections_secret_masking():
     assert "password = True" in src
 
 
-def test_safety_status_screen_shows_off():
-    """SafetyStatusScreen Real Orders OFF mesajı içeriyor."""
+def test_safety_status_screen_shows_trading_mode():
+    """SafetyStatusScreen trading modu ve mod bilgisi içeriyor."""
     from screens import SafetyStatusScreen
     src = inspect.getsource(SafetyStatusScreen)
-    assert "Real Orders: OFF" in src
-    assert "REAL_ORDER_DISABLED" in src
+    assert "trading_mode" in src
+    assert "paper" in src.lower() or "PAPER" in src
 
 
 def test_risk_limits_screen_input_stops_event():
@@ -166,18 +165,17 @@ def test_risk_limits_screen_input_stops_event():
     assert "event.stop()" in src
 
 
-def test_splash_menu_has_7_items():
-    """SplashMenuScreen 7 menü öğesi içeriyor."""
+def test_splash_menu_has_items():
+    """SplashMenuScreen menü öğeleri içeriyor (en az 7)."""
     from config import Config
     cfg = Config(name="test")
     screen = SplashMenuScreen_check = __import__("screens").SplashMenuScreen
-    # Check _menu_items has 7 items
     import i18n
     i18n.set_language("tr")
     tmp_screen = screen.__new__(screen)
     tmp_screen._cfg = cfg
     items = tmp_screen._menu_items()
-    assert len(items) == 7
+    assert len(items) >= 7, f"Menüde en az 7 öğe olmalı, bulunan: {len(items)}"
 
 
 def test_menu_screen_go_back_action():
@@ -187,9 +185,9 @@ def test_menu_screen_go_back_action():
     assert "dismiss(None)" in src
 
 
-def test_real_order_disabled_still_active():
-    """REAL_ORDER_DISABLED koruması hala çalışıyor."""
-    import autonomous
-    import pytest
-    with pytest.raises(RuntimeError, match="REAL_ORDER_DISABLED"):
-        autonomous.create_order("BTCUSDT", "BUY", "MARKET", 0.001)
+def test_live_mode_default_paper():
+    """Varsayılan trading modu paper — live_autonomous False olmalı."""
+    from config import Config
+    cfg = Config()
+    assert getattr(cfg, "trading_mode", "paper") == "paper"
+    assert getattr(cfg, "live_autonomous", False) is False

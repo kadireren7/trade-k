@@ -7,7 +7,7 @@ import pytest
 import ai
 import market
 from ai import PositionDecision
-from autonomous import AutonomousEngine, create_order, futures_create_order
+from autonomous import AutonomousEngine
 from portfolio import Portfolio, validate_stop_update
 import portfolio as portfolio_mod
 
@@ -553,34 +553,30 @@ def test_parse_status_eski_format_uyumlu():
     assert pd.close_reason == ""
 
 
-# ── güvenlik — gerçek emir yasağı ────────────────────────────────────────────
+# ── güvenlik — live_autonomous kapalıyken live_sell_fn çağrılmaz ─────────────
 
-def test_create_order_her_modda_disabled_guvenli():
-    with pytest.raises(RuntimeError, match="REAL_ORDER_DISABLED"):
-        create_order(symbol="BTCUSDT", side="BUY")
-
-
-def test_futures_create_order_her_modda_disabled():
-    with pytest.raises(RuntimeError, match="REAL_ORDER_DISABLED"):
-        futures_create_order(symbol="BTCUSDT", side="BUY")
-
-
-def test_live_baglanti_olsa_bile_paper_kalir(portfolio, engine):
-    """Live cfg (binance key) olsa bile create_order REAL_ORDER_DISABLED verir."""
-    engine.cfg.binance_key = "fake_key_xyz"
-    with pytest.raises(RuntimeError, match="REAL_ORDER_DISABLED"):
-        create_order(symbol="BTCUSDT", side="BUY", type="MARKET", quantity=0.01)
+@pytest.mark.asyncio
+async def test_apply_decision_paper_modda_live_sell_fn_cagrilmaz(portfolio, engine):
+    """live_autonomous=False → live_sell_fn set olsa bile çağrılmamalı."""
+    called = []
+    async def dummy_sell(sym, qty):
+        called.append(sym)
+        return (52000.0, qty, qty * 52000.0)
+    engine.live_sell_fn = dummy_sell
+    engine.cfg.live_autonomous = False
+    portfolio.buy("BTCUSDT", 500, 50000.0)
+    pd = make_pd("BTCUSDT", "KAR_AL", "test", close_reason="test")
+    ok, msg = await engine.apply_decision("BTCUSDT", pd, 52000.0)
+    assert ok
+    assert "BTCUSDT" not in portfolio.positions
+    assert called == []  # live_sell_fn çağrılmamalı
 
 
 @pytest.mark.asyncio
-async def test_apply_decision_gercek_emir_gondermez(portfolio, engine):
-    """apply_decision KAR_AL → sadece portfolio.sell çağrır, create_order çağırmaz."""
+async def test_apply_decision_kar_al_portfolio_sell_yapar(portfolio, engine):
+    """KAR_AL → portfolio.sell çağrılmalı, pozisyon kapanmalı."""
     portfolio.buy("BTCUSDT", 500, 50000.0)
     pd = make_pd("BTCUSDT", "KAR_AL", "test", close_reason="test")
-
-    # create_order çağrılırsa RuntimeError fırlar — test bunu yakalamazsa geçer
     ok, msg = await engine.apply_decision("BTCUSDT", pd, 52000.0)
-
     assert ok
     assert "BTCUSDT" not in portfolio.positions
-    # Buraya kadar ulaşabildik → create_order çağrılmadı (çağrılsaydı RuntimeError olurdu)

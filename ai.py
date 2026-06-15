@@ -1,11 +1,11 @@
-"""Claude analiz katmanı — Claude Code aboneliğin üzerinden çalışır.
+"""AI analiz katmanı — Claude, OpenAI, Gemini, Ollama veya Grok destekli.
 
-claude-agent-sdk yerel `claude` CLI'ını kullanır; ayrı API key gerekmez.
-Dört mod:
-- scan:     tüm veya kategorili piyasa, 2-4 AL adayı (stop + hedef dahil)
-- analyze:  tek sembol, tek ÖNERİ (stop + hedef dahil)
-- status:   açık pozisyonlar için kapsamlı analiz
-- protect:  mevcut pozisyon için zarar-kes / kâr-al seviyesi belirleme
+Sağlayıcılar:
+- claude:  claude-agent-sdk (Claude Code aboneliği, ayrı key gerekmez)
+- openai:  OpenAI API (gpt-4o, o3-mini vb.) — openai_api_key gerekli
+- gemini:  Google Gemini API (gemini-2.0-flash vb.) — gemini_api_key gerekli
+- ollama:  Yerel Ollama (llama3.2, mistral vb.) — Ollama kurulu + ollama serve
+- grok:    xAI Grok API (grok-3-mini vb.) — grok_api_key gerekli
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ MANİPÜLASYON KONTROL LİSTESİ (her karardan önce zihinsel olarak uygula):
 - Düşük likidite: hacmi zayıf enstrümanda fiyat hareketi sinyal değildir.
 - Haber/tek mum tuzağı: tek sert mum = teyit bekle, kovalamaca yok.
 İLKE: Fırsatı kaçırmak para kaybetmekten İYİDİR. Şüphen varsa önerme.
-Bu bir paper trading (sanal para) simülasyonudur; kullanıcı yeni başlayan."""
+ÖNEMLİ: Yanıtları YALNIZCA Türkçe ver. Belirtilen JSON formatına kesinlikle uy."""
 
 SLTP_RULES = """\
 ZARAR-KES / KÂR-AL KURALLARI (her AL önerisi için zorunlu):
@@ -305,12 +305,18 @@ def parse_protection(text: str) -> Protection | None:
 
 
 def parse_status_analysis(text: str) -> StatusAnalysis | None:
-    """DURUM_ANALIZI: {...} satırını ayrıştır (iç içe JSON için greedy)."""
-    m = re.search(r"DURUM_ANALIZI:\s*(\{.*\})", text, re.DOTALL)
-    if not m:
+    """DURUM_ANALIZI: {...} satırını ayrıştır — brace sayımıyla iç içe JSON desteklenir."""
+    idx = text.find("DURUM_ANALIZI:")
+    if idx == -1:
+        return None
+    brace = text.find("{", idx)
+    if brace == -1:
         return None
     try:
-        d = json.loads(m.group(1))
+        d, _ = json.JSONDecoder().raw_decode(text, brace)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    try:
         valid_kararlar = {"DEVAM", "BEKLE", "KAR_AL", "ZARARI_KES", "STOP_GUNCELLE", "KORU"}
         pozisyonlar = []
         for p in d.get("pozisyonlar", []):
@@ -334,16 +340,40 @@ def parse_status_analysis(text: str) -> StatusAnalysis | None:
         return None
 
 
+def _strip_json_object(text: str, prefix: str) -> str:
+    """prefix: {...} bloğunu brace sayımıyla metinden kaldır (iç içe JSON destekli)."""
+    result = text
+    while True:
+        idx = result.find(prefix + ":")
+        if idx == -1:
+            break
+        brace = result.find("{", idx)
+        if brace == -1:
+            break
+        depth, end = 0, brace
+        for i, ch in enumerate(result[brace:], brace):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        result = result[:idx] + result[end + 1:]
+    return result
+
+
 def strip_machine_lines(text: str) -> str:
     """Kullanıcıya gösterilecek metinden ham JSON satırlarını çıkar."""
     text = re.sub(r"ONERILER:\s*\[.*?\]", "", text, flags=re.DOTALL)
     text = re.sub(r"ONERI:\s*\{.*?\}", "", text, flags=re.DOTALL)
-    text = re.sub(r"KORUMA:\s*\{.*?\}", "", text, flags=re.DOTALL)
-    text = re.sub(r"DURUM_ANALIZI:\s*\{.*?\}", "", text, flags=re.DOTALL)
+    text = _strip_json_object(text, "KORUMA")
+    text = _strip_json_object(text, "DURUM_ANALIZI")
     return text.strip()
 
 
-async def _ask(prompt: str, system: str) -> str:
+async def _ask_claude(prompt: str, system: str) -> str:
+    """Claude Agent SDK üzerinden analiz (Claude Code aboneliği kullanır)."""
     options = ClaudeAgentOptions(
         system_prompt=system,
         max_turns=1,
@@ -357,6 +387,155 @@ async def _ask(prompt: str, system: str) -> str:
                 if isinstance(block, TextBlock):
                     full += block.text
     return full
+
+
+async def _ask_openai(prompt: str, system: str) -> str:
+    """OpenAI API (GPT-4o vb.) üzerinden analiz."""
+    try:
+        import openai as _openai
+    except ImportError:
+        raise RuntimeError("openai paketi yok: pip install openai")
+    cfg = config.current()
+    key = getattr(cfg, "openai_api_key", "")
+    if not key:
+        raise RuntimeError("OpenAI API key eksik. /model key openai YOUR_KEY ile ayarla.")
+    model = getattr(cfg, "openai_model", "gpt-4o")
+    client = _openai.AsyncOpenAI(api_key=key)
+    resp = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
+        max_tokens=2048,
+        temperature=0.3,
+    )
+    return resp.choices[0].message.content or ""
+
+
+async def _ask_gemini(prompt: str, system: str) -> str:
+    """Google Gemini API üzerinden analiz."""
+    try:
+        import google.generativeai as genai
+    except ImportError:
+        raise RuntimeError("google-generativeai paketi yok: pip install google-generativeai")
+    cfg = config.current()
+    key = getattr(cfg, "gemini_api_key", "")
+    if not key:
+        raise RuntimeError("Gemini API key eksik. /model key gemini YOUR_KEY ile ayarla.")
+    model_name = getattr(cfg, "gemini_model", "gemini-2.0-flash")
+    genai.configure(api_key=key)
+    model = genai.GenerativeModel(
+        model_name,
+        system_instruction=system,
+        generation_config={"temperature": 0.3, "max_output_tokens": 2048},
+    )
+    resp = await model.generate_content_async(prompt)
+    return resp.text
+
+
+async def _ask_ollama(prompt: str, system: str) -> str:
+    """Yerel Ollama sunucusu üzerinden analiz (API key gerekmez)."""
+    import httpx
+    cfg = config.current()
+    model_name = getattr(cfg, "ollama_model", "llama3.2")
+    payload = {
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
+        "stream": False,
+        "options": {"temperature": 0.3},
+    }
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        try:
+            resp = await client.post("http://localhost:11434/api/chat", json=payload)
+            resp.raise_for_status()
+            return resp.json().get("message", {}).get("content", "")
+        except httpx.ConnectError:
+            raise RuntimeError(
+                "Ollama bağlantısı yok. Terminal'de 'ollama serve' çalıştır, "
+                f"sonra 'ollama pull {model_name}' ile modeli indir."
+            )
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError(f"Ollama hata {e.response.status_code}: {e.response.text[:200]}")
+
+
+async def _ask_grok(prompt: str, system: str) -> str:
+    """xAI Grok API üzerinden analiz (OpenAI uyumlu)."""
+    try:
+        import openai as _openai
+    except ImportError:
+        raise RuntimeError("openai paketi yok: pip install openai")
+    cfg = config.current()
+    key = getattr(cfg, "grok_api_key", "")
+    if not key:
+        raise RuntimeError("Grok API key eksik. /model key grok YOUR_KEY ile ayarla.")
+    model = getattr(cfg, "grok_model", "grok-3-mini")
+    client = _openai.AsyncOpenAI(api_key=key, base_url="https://api.x.ai/v1")
+    resp = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
+        max_tokens=2048,
+        temperature=0.3,
+    )
+    return resp.choices[0].message.content or ""
+
+
+def _friendly_error(provider: str, exc: Exception) -> RuntimeError:
+    """Teknik hata mesajlarını kullanıcı dostu Türkçe'ye çevirir."""
+    msg = str(exc)
+    lmsg = msg.lower()
+    if "authentication" in lmsg or "api key" in lmsg or "invalid_api_key" in lmsg or "401" in lmsg:
+        tips = {
+            "openai": "/model key openai YOUR_KEY",
+            "gemini": "/model key gemini YOUR_KEY",
+            "grok": "/model key grok YOUR_KEY",
+            "claude": "Claude Code aboneliğinin aktif olduğundan emin ol",
+        }
+        tip = tips.get(provider, "API key'ini kontrol et")
+        return RuntimeError(f"[{provider.upper()}] Kimlik doğrulama hatası — {tip}")
+    if "rate" in lmsg or "429" in lmsg or "quota" in lmsg:
+        return RuntimeError(
+            f"[{provider.upper()}] İstek limiti aşıldı — bir dakika bekle, sonra tekrar dene"
+        )
+    if "model" in lmsg and ("not found" in lmsg or "does not exist" in lmsg or "404" in lmsg):
+        return RuntimeError(
+            f"[{provider.upper()}] Model bulunamadı — /model komutuyla geçerli bir model seç"
+        )
+    if "connection" in lmsg or "connect" in lmsg or "timeout" in lmsg:
+        return RuntimeError(
+            f"[{provider.upper()}] Bağlantı hatası — internet bağlantını ve servis durumunu kontrol et"
+        )
+    if "insufficient" in lmsg or "balance" in lmsg or "credit" in lmsg:
+        return RuntimeError(
+            f"[{provider.upper()}] Yetersiz kredi — hesabına kredi yükle"
+        )
+    # fallback: ilk 120 karakteri göster
+    return RuntimeError(f"[{provider.upper()}] {msg[:120]}")
+
+
+async def _ask(prompt: str, system: str) -> str:
+    """Aktif AI sağlayıcısına göre analiz yap."""
+    provider = getattr(config.current(), "ai_provider", "claude")
+    try:
+        if provider == "openai":
+            return await _ask_openai(prompt, system)
+        elif provider == "gemini":
+            return await _ask_gemini(prompt, system)
+        elif provider == "ollama":
+            return await _ask_ollama(prompt, system)
+        elif provider == "grok":
+            return await _ask_grok(prompt, system)
+        return await _ask_claude(prompt, system)
+    except RuntimeError:
+        raise  # zaten biçimlendirilmiş hata
+    except Exception as exc:
+        raise _friendly_error(provider, exc) from exc
 
 
 def _compact_klines(klines: list[dict]) -> list[list[float]]:
@@ -518,20 +697,17 @@ async def scan_directional(
         "long": "Sadece LONG/YÜKSELİŞ fırsatları ara. AL veya SPOT_AL öner.",
         "yukselis": "Sadece LONG/YÜKSELİŞ fırsatları ara. AL veya SPOT_AL öner.",
         "short": (
-            "Sadece SHORT/DÜŞÜŞ fırsatları ara. SHORT_AL öner. "
-            "Sadece yüksek likidite realtime kripto (BTC/ETH/SOL gibi). "
-            "Stop fiyatı giriş fiyatının ÜSTÜNDE olmalı. "
-            "Hedef fiyatı giriş fiyatının ALTINDA olmalı."
-        ),
-        "dusus": (
-            "Sadece SHORT/DÜŞÜŞ fırsatları ara. SHORT_AL öner. "
-            "Sadece yüksek likidite realtime kripto."
+            "Sadece SHORT/DÜŞÜŞ fırsatları ara. islem='SHORT_AL' olacak. "
+            "watchlist'teki kripto semboller arasından düşüş sinyali verenleri seç. "
+            "Stop fiyatı (zarar_kes) giriş fiyatının ÜSTÜNDE olmalı. "
+            "Hedef fiyatı (kar_al) giriş fiyatının ALTINDA olmalı. "
+            "En az 1, en fazla 3 SHORT önerisi ver."
         ),
         "scalp": (
-            "Sadece SCALP (hızlı işlem, max 30dk) fırsatları ara. SCALP_AL öner. "
-            "Sadece yüksek likidite Binance kripto (BTC/ETH/SOL/BNB). "
+            "Sadece SCALP (hızlı işlem, max 30dk) fırsatları ara. islem='SCALP_AL' olacak. "
+            "watchlist'teki yüksek likidite Binance kripto sembollerinden seç (BTC/ETH/SOL/BNB öncelikli). "
             "Küçük hedef/stop (%0.3-%1). Yüksek momentum ve hacim teyidi şart. "
-            "Komisyon: %0.1 açılış + %0.1 kapanış."
+            "Komisyon: %0.1 açılış + %0.1 kapanış. En az 1, en fazla 2 SCALP önerisi ver."
         ),
         "hizli": "Sadece SCALP fırsatları ara. SCALP_AL öner.",
         "day": "Gün içi işlem (day trade) fırsatları ara. 15m/1h yapısına göre.",
@@ -576,14 +752,22 @@ SCALP için: stop %0.3-%1, hedef %0.5-%2, sadece BTC/ETH/SOL/BNB
 
 
 async def protect_position(symbol: str, entry: float, qty: float,
-                            cash: float) -> str:
+                            cash: float, direction: str = "long") -> str:
     """Açık pozisyon için Claude'dan zarar-kes / kâr-al seviyesi iste."""
     k_short, k_long = await asyncio.gather(
         market.fetch_klines(symbol, "1h", 48),
         market.fetch_klines(symbol, "4h", 42),
     )
+    dir_note = (
+        "BU POZİSYON SHORT (satış yönlü): zarar_kes giriş fiyatının ÜSTÜNDE, "
+        "kar_al giriş fiyatının ALTINDA olmalı."
+        if direction == "short" else
+        "BU POZİSYON LONG (alış yönlü): zarar_kes giriş fiyatının ALTINDA, "
+        "kar_al giriş fiyatının ÜSTÜNDE olmalı."
+    )
     payload = {
         "sembol": symbol,
+        "yon": direction,
         "guncel_fiyat": k_short[-1]["c"],
         "pozisyon": {"giris_fiyati": entry, "miktar": qty,
                      "deger_usdt": round(qty * k_short[-1]["c"], 2)},
@@ -591,5 +775,9 @@ async def protect_position(symbol: str, entry: float, qty: float,
         "mumlar_saatlik_OHLC": _compact_klines(k_short),
         "mumlar_uzunvade_OHLC": _compact_klines(k_long),
     }
-    prompt = f"Bu pozisyon için koruma seviyeleri belirle:\n{json.dumps(payload, separators=(',', ':'))}"
+    prompt = (
+        f"{dir_note}\n"
+        f"Bu pozisyon için koruma seviyeleri belirle:\n"
+        f"{json.dumps(payload, separators=(',', ':'))}"
+    )
     return await _ask(prompt, PROTECT_SYSTEM)

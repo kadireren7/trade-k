@@ -165,8 +165,9 @@ def test_all_commands_have_descriptions():
         assert cmd.description_en, f"Empty description_en in {cmd.command_en}"
 
 
-def test_real_order_disabled_still_active():
-    """REAL_ORDER_DISABLED koruması bozulmadı."""
-    import autonomous
-    with pytest.raises(RuntimeError, match="REAL_ORDER_DISABLED"):
-        autonomous.create_order("BTCUSDT", "BUY", "MARKET", 0.001)
+def test_live_autonomous_default_false():
+    """live_autonomous varsayılan olarak False — gerçek emir paper modda gönderilmez."""
+    from config import Config
+    cfg = Config()
+    assert cfg.live_autonomous is False
+    assert cfg.trading_mode == "paper"

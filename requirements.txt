@@ -1,0 +1,14 @@
+# trade-k — bağımlılıklar
+# pip install -r requirements.txt
+
+# Zorunlu
+textual>=0.80.0          # Terminal UI
+httpx>=0.27.0            # HTTP istemcisi (Binance API + Ollama)
+yfinance>=0.2.0          # Yahoo Finance (global piyasa verisi)
+claude-agent-sdk>=0.2.0  # Claude AI (Claude Code aboneliği gerekli)
+
+# AI sağlayıcıları (isteğe bağlı — kullandığın sağlayıcıyı kur)
+openai>=1.0.0            # OpenAI GPT-4o + xAI Grok (aynı paket)
+google-generativeai>=0.8 # Google Gemini
+# ollama → ayrı uygulama kurulumu: https://ollama.com
+# telegram → ayrı paket gerekmez (httpx ile doğrudan Bot API kullanılır)
