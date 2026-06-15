@@ -281,8 +281,20 @@ class TelegramCommandBot:
                 httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout,
                 httpx.WriteError, OSError):
             return
+        if r.status_code == 401:
+            # Geçersiz token — poll loopunu durdur, tekrar deneme
+            self._log(
+                "[red3]📱 Telegram token geçersiz (401). "
+                "Bot durduruldu. /bildirim bagla TOKEN CHAT_ID ile yenile.[/]"
+            )
+            raise asyncio.CancelledError
+        if r.status_code == 409:
+            # Başka bir bot örneği çalışıyor
+            self._log("[gold3]📱 Telegram 409: başka bir oturum aktif, yeniden deneniyor…[/]")
+            await asyncio.sleep(10)
+            return
         if r.status_code != 200:
-            self._log(f"[red3]📱 Telegram getUpdates hata: HTTP {r.status_code}[/]")
+            self._log(f"[grey58]📱 Telegram getUpdates hata: HTTP {r.status_code}[/]")
             return
         for update in r.json().get("result", []):
             self._offset = update["update_id"] + 1
