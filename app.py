@@ -817,6 +817,8 @@ class TradeApp(App):
             "strategy": "strateji", "mod": "strateji",
             "heat": "risk", "isi": "risk",
             "lmt": "limit",
+            "exit": "cikis", "quit": "cikis", "q": "cikis",
+            "balance": "bakiye", "wallet": "bakiye",
         }
         op = _ALIASES.get(op, op)
 
@@ -1085,6 +1087,47 @@ class TradeApp(App):
                 else:
                     log.write("[bold]Account reset — 10,000 USDT[/] "
                               "[grey58](recommendation history kept for /report)[/]")
+
+        elif op == "cikis":
+            self.action_open_menu()
+
+        elif op == "bakiye":
+            sub = parts[1].lower() if len(parts) > 1 else ""
+            if sub in ("ayarla", "set") and len(parts) > 2:
+                try:
+                    yeni = float(parts[2].replace(",", "."))
+                    if yeni <= 0:
+                        raise ValueError("Bakiye sıfırdan büyük olmalı")
+                    self.portfolio.cash = yeni
+                    self.portfolio.save()
+                    self._daily_start_equity = yeni
+                    if i18n.lang() == "tr":
+                        log.write(
+                            f"[bold green3]Paper bakiye {yeni:,.2f} USDT olarak ayarlandı.[/] "
+                            f"[grey58]Mevcut pozisyonlar etkilenmez.[/]"
+                        )
+                    else:
+                        log.write(
+                            f"[bold green3]Paper balance set to {yeni:,.2f} USDT.[/] "
+                            f"[grey58]Existing positions are unaffected.[/]"
+                        )
+                except ValueError as e:
+                    log.write(f"[red3]Hata: {e}[/]")
+            else:
+                all_prices = {s: tk.price for s, tk in self.feed.tickers.items() if tk.price > 0}
+                eq = self.portfolio.equity(all_prices)
+                if i18n.lang() == "tr":
+                    log.write(
+                        f"[bold]Bakiye:[/] nakit {self.portfolio.cash:,.2f} USDT | "
+                        f"toplam varlık {eq:,.2f} USDT | "
+                        f"[grey58]değiştirmek için: /bakiye ayarla 100[/]"
+                    )
+                else:
+                    log.write(
+                        f"[bold]Balance:[/] cash {self.portfolio.cash:,.2f} USDT | "
+                        f"total equity {eq:,.2f} USDT | "
+                        f"[grey58]to change: /balance set 100[/]"
+                    )
 
         else:
             raise ValueError(f"Bilinmeyen komut: /{op}  (/yardim)")

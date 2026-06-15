@@ -73,7 +73,10 @@ _HELP_TR = """\
   [bold]/fiyat sat SEMBOL HEDEF[/]        → hedef fiyata çıkınca otomatik sat
   [bold]/fiyat bildir SEMBOL HEDEF[/]     → fiyat hedefine ulaşınca bildir
   [bold]/fiyat liste[/]  [bold]/fiyat sil[/]
-  [bold]/gecmis[/]  [bold]/performans[/]  [bold]/sifirla evet[/]  [bold]q[/]=çıkış"""
+  [bold]/bakiye[/]                        → paper bakiyeni göster
+  [bold]/bakiye ayarla 100[/]            → paper bakiyeyi 100 USDT yap (test için)
+  [bold]/gecmis[/]  [bold]/performans[/]  [bold]/sifirla evet[/]
+  [bold]/cikis[/]                        → menüye dön"""
 
 _HELP_EN = """\
 [bold cyan]Analysis[/]
@@ -113,7 +116,10 @@ _HELP_EN = """\
   [bold]/price sell SYMBOL TARGET[/]        → auto-sell when price rises to target
   [bold]/price alert SYMBOL TARGET[/]       → notify when price hits target
   [bold]/price list[/]  [bold]/price clear[/]
-  [bold]/history[/]  [bold]/report[/]  [bold]/reset[/]  [bold]q[/]=quit"""
+  [bold]/balance[/]                      → show paper balance
+  [bold]/balance set 100[/]             → set paper balance to 100 USDT (for testing)
+  [bold]/history[/]  [bold]/report[/]  [bold]/reset yes[/]
+  [bold]/exit[/]                         → return to menu"""
 
 _HELP_SHORT_TR = """\
 [bold cyan]En sık kullanılanlar[/]
@@ -125,7 +131,9 @@ _HELP_SHORT_TR = """\
   [bold]/otonom ac[/]         → otonom modu başlat
   [bold]/gecmis[/]            → işlem geçmişi
   [bold]/performans[/]        → performans istatistikleri
+  [bold]/bakiye ayarla 100[/] → paper bakiyeyi ayarla
   [bold]/sifirla evet[/]      → hesabı sıfırla
+  [bold]/cikis[/]             → menüye dön
   [bold]/yardim tam[/]        → tam komut listesi"""
 
 _HELP_SHORT_EN = """\
@@ -138,7 +146,9 @@ _HELP_SHORT_EN = """\
   [bold]/auto on[/]           → start autonomous mode
   [bold]/history[/]           → trade history
   [bold]/report[/]            → performance stats
+  [bold]/balance set 100[/]   → set paper balance
   [bold]/reset yes[/]         → reset account
+  [bold]/exit[/]              → return to menu
   [bold]/help full[/]         → full command list"""
 
 _STRINGS: dict[str, dict[str, str]] = {

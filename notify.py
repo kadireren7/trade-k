@@ -212,15 +212,22 @@ class TelegramCommandBot:
             except asyncio.CancelledError:
                 break
             except Exception:
-                pass
-            await asyncio.sleep(1)
+                await asyncio.sleep(5)  # hata sonrası kısa bekleme
+                continue
+            await asyncio.sleep(0)  # long-poll zaten bekledi, hemen devam et
 
     async def _poll_once(self) -> None:
         url = f"{TELEGRAM_API}/bot{self._n.token}/getUpdates"
-        params = {"offset": self._offset, "timeout": 25, "limit": 10}
+        params = {"offset": self._offset, "timeout": 20, "limit": 10}
+        # connect=5s, read=25s (long-poll için)
+        _timeout = httpx.Timeout(connect=5.0, read=25.0, write=5.0, pool=5.0)
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=_timeout) as client:
                 r = await client.get(url, params=params)
+        except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError,
+                httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout,
+                httpx.WriteError, OSError):
+            return
         except Exception:
             return
         if r.status_code != 200:
