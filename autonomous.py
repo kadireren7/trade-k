@@ -702,6 +702,11 @@ class AutonomousEngine:
             self._log_event("error", reason=f"Pozisyon analiz hatası: {e}")
             self.log(f"[red3][OTONOM] Pozisyon analiz hatası: {e}[/]")
 
+    def _log_summary(self, result: str) -> None:
+        summary = ai.strip_machine_lines(result)
+        if summary:
+            self.log(f"[grey58][OTONOM] Tarama:[/] {summary}")
+
     async def _run_scan(self) -> None:
         """15 dakikada bir: yeni fırsat ara ve uygun adayda paper trade aç."""
         p = self.effective_profile
@@ -789,17 +794,27 @@ class AutonomousEngine:
             crypto_wl = watchlist  # zaten sadece kripto
             tf = "15m" if (otonom_type == "scalp" or
                            getattr(config.current(), "scalp_enabled", False)) else "1h"
+
+            # TA ön filtresi — yönlü setleri ayrı tut (longshort/tam için kritik)
+            ta_long_syms: set[str] = set()
+            ta_short_syms: set[str] = set()
             try:
                 if ta_mode == "AL+SAT":
-                    ta_long = await indicators.scan_signals(crypto_wl, tf, filter_signal="AL")
-                    ta_short = await indicators.scan_signals(crypto_wl, tf, filter_signal="SAT")
-                    ta_symbols = {r.symbol for r in ta_long} | {r.symbol for r in ta_short}
+                    ta_long_r, ta_short_r = await asyncio.gather(
+                        indicators.scan_signals(crypto_wl, tf, filter_signal="AL"),
+                        indicators.scan_signals(crypto_wl, tf, filter_signal="SAT"),
+                    )
+                    ta_long_syms = {r.symbol for r in ta_long_r}
+                    ta_short_syms = {r.symbol for r in ta_short_r}
+                    ta_symbols = ta_long_syms | ta_short_syms
                 elif ta_mode == "SAT":
-                    ta_short = await indicators.scan_signals(crypto_wl, tf, filter_signal="SAT")
-                    ta_symbols = {r.symbol for r in ta_short}
+                    ta_short_r = await indicators.scan_signals(crypto_wl, tf, filter_signal="SAT")
+                    ta_short_syms = {r.symbol for r in ta_short_r}
+                    ta_symbols = ta_short_syms
                 else:
-                    ta_long = await indicators.scan_signals(crypto_wl, tf, filter_signal="AL")
-                    ta_symbols = {r.symbol for r in ta_long}
+                    ta_long_r = await indicators.scan_signals(crypto_wl, tf, filter_signal="AL")
+                    ta_long_syms = {r.symbol for r in ta_long_r}
+                    ta_symbols = ta_long_syms
 
                 in_pos = set(self.portfolio.positions.keys())
                 filtered_wl = [s for s in watchlist if s in ta_symbols or s in in_pos]
@@ -809,12 +824,13 @@ class AutonomousEngine:
                         "ta_filter",
                         reason=f"TA filtresi ({ta_mode}): {len(crypto_wl)}→{len(filtered_wl)} kripto aday"
                     )
+                    long_c = len([s for s in filtered_wl if s in ta_long_syms])
+                    short_c = len([s for s in filtered_wl if s in ta_short_syms])
                     self.log(
                         f"[grey58][OTONOM] TA filtresi ({ta_mode}): {len(crypto_wl)} sembolden "
-                        f"{len(filtered_wl)} aday geçti → AI'ya gönderiliyor[/]"
+                        f"{len(filtered_wl)} aday ({long_c} yükseliş / {short_c} düşüş) → AI'ya gönderiliyor[/]"
                     )
                 else:
-                    # TA sinyali yok → fallback: sadece kullanıcı watchlist'i kullan
                     fallback = user_wl or crypto_wl[:20]
                     watchlist = fallback
                     self.log(
@@ -825,48 +841,58 @@ class AutonomousEngine:
                 self.log(f"[grey58][OTONOM] TA filtresi atlandı ({ta_err}), tam liste kullanılıyor[/]")
 
             # AI taraması: otonom_type'a göre doğru fonksiyonu seç
-            # Tüm çağrılarda category="kripto" → Yahoo/forex verisi karışmıyor
+            suggestions: list[ai.Suggestion] = []
+
             if otonom_type == "short":
                 result = await ai.scan_directional(
                     watchlist, self.portfolio.cash, positions, direction="short"
                 )
+                self._log_summary(result)
+                suggestions = ai.parse_suggestions(result)
+
             elif otonom_type == "scalp":
                 result = await ai.scan_directional(
                     watchlist, self.portfolio.cash, positions, direction="scalp"
                 )
+                self._log_summary(result)
+                suggestions = ai.parse_suggestions(result)
+
             elif otonom_type == "long":
                 result = await ai.scan_market_filtered(
                     watchlist, self.portfolio.cash, positions,
-                    category="kripto",
-                    leverage_enabled=False,
-                    max_leverage=p.max_leverage,
-                    trade_plan="sadece_long",
+                    category="kripto", leverage_enabled=False,
+                    max_leverage=p.max_leverage, trade_plan="sadece_long",
                 )
+                self._log_summary(result)
+                suggestions = ai.parse_suggestions(result)
+
             elif otonom_type == "kaldirac":
                 result = await ai.scan_market_filtered(
                     watchlist, self.portfolio.cash, positions,
-                    category="kripto",
-                    leverage_enabled=lev_enabled,
-                    max_leverage=p.max_leverage,
-                    trade_plan="tam",
+                    category="kripto", leverage_enabled=lev_enabled,
+                    max_leverage=p.max_leverage, trade_plan="tam",
                 )
+                self._log_summary(result)
+                suggestions = ai.parse_suggestions(result)
+
             else:
-                # longshort, tam → dengeli/tam plan, her iki yön
-                _plan_map = {"longshort": "dengeli", "tam": "tam"}
-                effective_plan = _plan_map.get(otonom_type, "dengeli")
-                result = await ai.scan_market_filtered(
-                    watchlist, self.portfolio.cash, positions,
-                    category="kripto",
-                    leverage_enabled=lev_enabled,
-                    max_leverage=p.max_leverage,
-                    trade_plan=effective_plan,
+                # longshort / tam → iki paralel yönsel tarama
+                # LONG için TA-bullish semboller, SHORT için TA-bearish semboller
+                long_wl = [s for s in watchlist if s in ta_long_syms] or (user_wl or watchlist[:15])
+                short_wl = [s for s in watchlist if s in ta_short_syms] or (user_wl or watchlist[:10])
+
+                long_res, short_res = await asyncio.gather(
+                    ai.scan_directional(long_wl, self.portfolio.cash, positions, direction="long"),
+                    ai.scan_directional(short_wl, self.portfolio.cash, positions, direction="short"),
                 )
+                s_long = ai.strip_machine_lines(long_res)
+                s_short = ai.strip_machine_lines(short_res)
+                if s_long:
+                    self.log(f"[grey58][OTONOM] LONG tarama:[/] {s_long}")
+                if s_short:
+                    self.log(f"[grey58][OTONOM] SHORT tarama:[/] {s_short}")
+                suggestions = ai.parse_suggestions(long_res) + ai.parse_suggestions(short_res)
 
-            summary = ai.strip_machine_lines(result)
-            if summary:
-                self.log(f"[grey58][OTONOM] Tarama:[/] {summary}")
-
-            suggestions = ai.parse_suggestions(result)
             candidates = []
             for s in suggestions:
                 if s.islem in _allowed:
