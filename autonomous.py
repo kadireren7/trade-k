@@ -171,6 +171,7 @@ class AutonomousEngine:
         self._log_path = log_path
         self.state = AutonomousState.load(state_path)
         self.state.enabled = False  # her başlangıçta kapalı
+        self.state.save(state_path)  # dosyaya yaz → _poll_web_flags stale enabled görmesin
         self._task: asyncio.Task | None = None
         self._history_len = len(portfolio.history)
         self.position_decisions: dict[str, str] = {}
