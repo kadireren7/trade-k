@@ -243,10 +243,22 @@ class TelegramCommandBot:
         self._log("[grey50]📱 Telegram komut botu başladı (polling aktif)[/]")
         await self._register_commands()
         _err_count = 0
+        _conflict_logged = False
         while True:
             try:
-                await self._poll_once()
+                conflict = await self._poll_once()
                 _err_count = 0
+                if conflict:
+                    # 409: önceki oturumun poll'u bitmesini bekle (20s timeout + buffer)
+                    if not _conflict_logged:
+                        self._log(
+                            "[gold3]📱 Telegram 409: önceki oturum kapanıyor, "
+                            "35sn bekleniyor…[/]"
+                        )
+                        _conflict_logged = True
+                    await asyncio.sleep(35)
+                else:
+                    _conflict_logged = False
             except asyncio.CancelledError:
                 self._log("[grey50]📱 Telegram botu durduruldu.[/]")
                 break
@@ -289,10 +301,8 @@ class TelegramCommandBot:
             )
             raise asyncio.CancelledError
         if r.status_code == 409:
-            # Başka bir bot örneği çalışıyor
-            self._log("[gold3]📱 Telegram 409: başka bir oturum aktif, yeniden deneniyor…[/]")
-            await asyncio.sleep(10)
-            return
+            # Başka bir oturum aktif — loop'a sinyal gönder, orada beklenir
+            return True
         if r.status_code != 200:
             self._log(f"[grey58]📱 Telegram getUpdates hata: HTTP {r.status_code}[/]")
             return
