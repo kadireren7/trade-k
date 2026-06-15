@@ -84,6 +84,24 @@ class RiskGateResult:
         return self.allowed and not self.blockers
 
 
+def check_position_count(
+    portfolio: "Portfolio",
+    max_open_positions: int,
+) -> RiskGateResult:
+    """Açık pozisyon sayısı limitini kontrol et — hem manuel hem otonom işlemler için."""
+    n = len(portfolio.positions)
+    if n >= max_open_positions:
+        return RiskGateResult(
+            allowed=False,
+            warnings=[],
+            blockers=[
+                f"Maksimum pozisyon limitine ulaşıldı: {n}/{max_open_positions} "
+                f"— önce bir pozisyon kapat veya otonom profili değiştir"
+            ],
+        )
+    return RiskGateResult(allowed=True, warnings=[], blockers=[])
+
+
 def check_before_buy(
     symbol: str,
     amount_usdt: float,

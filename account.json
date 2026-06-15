@@ -1,20 +1,6 @@
 {
-  "cash": 72.39847279683168,
+  "cash": 82.51623132417332,
   "positions": {
-    "SOLUSDT": {
-      "qty": 0.1353546291283162,
-      "entry": 73.88,
-      "stop": 74.8,
-      "target": 79.4,
-      "trade_style": "spot",
-      "direction": "long",
-      "opened_at": 1781536071.924471,
-      "is_leveraged": false,
-      "leverage": 1,
-      "margin_usdt": 0.0,
-      "notional_usdt": 0.0,
-      "liquidation_price": 0.0
-    },
     "ZECUSDT": {
       "qty": 0.011294649159960469,
       "entry": 531.225,
@@ -166,6 +152,15 @@
       "price": 1829.85,
       "usdt": 7.191073115127829,
       "pnl": -0.04892688487217084
+    },
+    {
+      "ts": 1781551162.4271452,
+      "side": "SAT",
+      "symbol": "SOLUSDT",
+      "qty": 0.1353546291283162,
+      "price": 74.75,
+      "usdt": 10.117758527341635,
+      "pnl": 0.11775852734163571
     }
   ]
 }

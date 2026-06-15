@@ -104,6 +104,10 @@ PRICE_CHECK_INTERVAL = 2    # 2 saniye
 LOG_FILE = Path(__file__).parent / "autonomous_log.jsonl"
 STATE_FILE = Path(__file__).parent / "autonomous_state.json"
 
+# Paper trading maliyet simülasyonu (sadece autonomous mod)
+PAPER_FEE_RATE: float = 0.001   # %0.1 komisyon per taraf
+PAPER_SLIP_RATE: float = 0.0005  # %0.05 kayma per taraf
+
 
 # ── Durum kalıcılığı ─────────────────────────────────────────────────────────
 CIRCUIT_BREAKER_COOLDOWN = 7200  # 2 saat (saniye)
@@ -498,8 +502,8 @@ class AutonomousEngine:
             try:
                 pos = self.portfolio.positions.get(sym)
                 fill_price = current_price
-                if (self.live_sell_fn and pos
-                        and getattr(self.cfg, "live_autonomous", False)):
+                is_live = getattr(self.cfg, "live_autonomous", False)
+                if self.live_sell_fn and pos and is_live:
                     try:
                         fp, _fq, _fu = await self.live_sell_fn(sym, pos.qty)
                         fill_price = fp
@@ -507,7 +511,25 @@ class AutonomousEngine:
                         self._log_event("error", symbol=sym,
                                         reason=f"Live sell hatası: {le}")
                         return False, f"{market.short_name(sym)}: live satış başarısız: {le}"
+                elif not is_live and pos:
+                    # Paper çıkış kayması: long için aşağı, short için yukarı
+                    if pos.direction == "short":
+                        fill_price = current_price * (1 + PAPER_SLIP_RATE)
+                    else:
+                        fill_price = current_price * (1 - PAPER_SLIP_RATE)
                 result_str = self.portfolio.sell(sym, fill_price)
+                if not is_live and pos:
+                    exit_notional = abs(pos.qty * current_price)
+                    exit_fee = exit_notional * PAPER_FEE_RATE
+                    self.portfolio.cash -= exit_fee
+                    if self.portfolio.history:
+                        prev_fee = self.portfolio.history[-1].get("fee_usdt") or 0.0
+                        self.portfolio.history[-1]["fee_usdt"] = prev_fee + exit_fee
+                        prev_slip = self.portfolio.history[-1].get("slip_usdt") or 0.0
+                        self.portfolio.history[-1]["slip_usdt"] = (
+                            prev_slip + exit_notional * PAPER_SLIP_RATE
+                        )
+                    self.portfolio.save()
                 if pd.karar == "KAR_AL":
                     color, label = "green3", "kâr alındı"
                 else:
@@ -1034,15 +1056,30 @@ class AutonomousEngine:
 
                 try:
                     if s.islem == "SHORT_AL":
-                        self.portfolio.buy_short(sym, usdt, price,
+                        # Kısa için kayma: entry fiyatı %0.05 aşağı
+                        slip_entry = price * (1 - PAPER_SLIP_RATE)
+                        fee_usdt = usdt * PAPER_FEE_RATE
+                        self.portfolio.buy_short(sym, usdt, slip_entry,
                                                  stop=s.zarar_kes, target=s.kar_al)
+                        self.portfolio.cash -= fee_usdt
+                        if self.portfolio.history:
+                            self.portfolio.history[-1]["fee_usdt"] = fee_usdt
+                            self.portfolio.history[-1]["slip_usdt"] = usdt * PAPER_SLIP_RATE
+                        self.portfolio.save()
                         decision_label = "SHORT_AL"
                         log_color = "red3"
                         log_action = "SHORT açıldı"
                     elif s.islem == "SCALP_AL":
+                        slip_entry = price * (1 + PAPER_SLIP_RATE)
+                        fee_usdt = usdt * PAPER_FEE_RATE
                         stop, target = s.zarar_kes or price*0.99, s.kar_al or price*1.015
-                        self.portfolio.buy(sym, usdt, price, trade_style="scalp",
+                        self.portfolio.buy(sym, usdt, slip_entry, trade_style="scalp",
                                            stop=stop, target=target)
+                        self.portfolio.cash -= fee_usdt
+                        if self.portfolio.history:
+                            self.portfolio.history[-1]["fee_usdt"] = fee_usdt
+                            self.portfolio.history[-1]["slip_usdt"] = usdt * PAPER_SLIP_RATE
+                        self.portfolio.save()
                         decision_label = "SCALP_AL"
                         log_color = "cyan"
                         log_action = "SCALP açıldı"
@@ -1059,8 +1096,18 @@ class AutonomousEngine:
                                 self._log_event("error", symbol=sym,
                                                 reason=f"Live buy hatası: {le}")
                                 continue
+                        else:
+                            # Paper: %0.05 kayma yukarı (long için daha kötü fiyat)
+                            fill_price = price * (1 + PAPER_SLIP_RATE)
                         self.portfolio.buy(sym, fill_usdt, fill_price,
                                            stop=stop, target=target)
+                        if not getattr(self.cfg, "live_autonomous", False):
+                            fee_usdt = fill_usdt * PAPER_FEE_RATE
+                            self.portfolio.cash -= fee_usdt
+                            if self.portfolio.history:
+                                self.portfolio.history[-1]["fee_usdt"] = fee_usdt
+                                self.portfolio.history[-1]["slip_usdt"] = fill_usdt * PAPER_SLIP_RATE
+                            self.portfolio.save()
                         decision_label = "AL"
                         log_color = "green3"
                         log_action = "AL açıldı"
@@ -1197,13 +1244,21 @@ class AutonomousEngine:
             return
 
         try:
+            slip_entry = price * (1 + PAPER_SLIP_RATE)
             result_str = self.portfolio.buy_leveraged(
-                sym, margin, effective_lev, price, s.zarar_kes, s.kar_al
+                sym, margin, effective_lev, slip_entry, s.zarar_kes, s.kar_al
             )
+            # Paper komisyon: margin üzerinden
+            fee_usdt = margin * PAPER_FEE_RATE
+            self.portfolio.cash -= fee_usdt
+            if self.portfolio.history:
+                self.portfolio.history[-1]["fee_usdt"] = fee_usdt
+                self.portfolio.history[-1]["slip_usdt"] = margin * PAPER_SLIP_RATE
+            self.portfolio.save()
             self.state.daily_trades += 1
             self.state.daily_leveraged_trades += 1
             self.state.save(self._state_path)
-            liq = calc_liquidation_price(price, effective_lev)
+            liq = calc_liquidation_price(slip_entry, effective_lev)
             notional = margin * effective_lev
             risk = abs((price - s.zarar_kes) * (notional / price))
             self._log_event(

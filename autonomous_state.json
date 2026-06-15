@@ -9,5 +9,6 @@
   "daily_leverage_locked": false,
   "cooldown_until": 0.0,
   "last_scan_time": 1781542032.6928978,
-  "last_analysis_time": 1781542048.7053168
+  "last_analysis_time": 1781542048.7053168,
+  "ws_connected": true
 }

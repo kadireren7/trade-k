@@ -12,11 +12,22 @@ from dataclasses import dataclass, field, fields as dc_fields
 from pathlib import Path
 
 STATE_FILE = Path(__file__).parent / "account.json"
+HISTORY_LOG_FILE = Path(__file__).parent / "history.jsonl"
 STARTING_CASH = 10_000.0
 
 SCALP_MAX_DURATION = 1800  # 30 dakika (saniye)
 MAX_LEVERAGE = 5
 MAINTENANCE_MARGIN_RATE = 0.005  # %0.5 bakım teminatı oranı
+
+# Paper trading maliyet simülasyon oranları (autonomous modda kullanılır)
+FEE_RATE: float = 0.001   # %0.1 komisyon per taraf
+SLIP_RATE: float = 0.0005  # %0.05 kayma per taraf
+
+# Tüm kapanış işlem tarafları (performance hesaplamalarında kullanılır)
+CLOSE_SIDES: frozenset[str] = frozenset({
+    "SAT", "SHORT_KAP", "LEVERAGE KAPATILDI", "SCALP_KAP", "LİKİDE"
+})
+OPEN_SIDES: frozenset[str] = frozenset({"AL", "SHORT", "LEVERAGE"})
 
 
 @dataclass
@@ -175,7 +186,7 @@ class Portfolio:
                 {
                     "cash": self.cash,
                     "positions": {s: vars(p) for s, p in self.positions.items()},
-                    "history": self.history[-200:],
+                    "history": self.history[-500:],
                 },
                 indent=2,
             )
@@ -323,13 +334,23 @@ class Portfolio:
     def _log(
         self, side: str, symbol: str, qty: float, price: float,
         usdt: float, pnl: float | None = None,
+        fee_usdt: float = 0.0, slip_usdt: float = 0.0,
     ) -> None:
-        self.history.append(
-            {
-                "ts": time.time(), "side": side, "symbol": symbol,
-                "qty": qty, "price": price, "usdt": usdt, "pnl": pnl,
-            }
-        )
+        entry = {
+            "ts": time.time(), "side": side, "symbol": symbol,
+            "qty": qty, "price": price, "usdt": usdt, "pnl": pnl,
+            "fee_usdt": fee_usdt, "slip_usdt": slip_usdt,
+        }
+        self.history.append(entry)
+        self._append_jsonl(entry)
+
+    def _append_jsonl(self, record: dict) -> None:
+        """Kalıcı tarih logu — asla kesilmez, append-only."""
+        try:
+            with HISTORY_LOG_FILE.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
 
     # ---- koruma (zarar-kes / kâr-al) ----
     def set_protection(

@@ -577,124 +577,93 @@ class TelegramCommandBot:
     async def _performans(self) -> str:
         if not self._portfolio:
             return "❌ Portföy bağlı değil"
-        import time as _time
-        import math as _math
+        import performance as perf_mod
+        from datetime import datetime as _dt
+        from pathlib import Path as _Path
         p = self._portfolio
         h = p.history
 
-        # Temel işlem istatistikleri
-        sells = [x for x in h if x.get("side") in ("SAT", "SHORT_KAP") and x.get("pnl") is not None]
-        n_total = len(sells)
-        if n_total == 0:
-            # Açık pozisyonlar varsa göster
-            prices: dict = {}
-            for sym in p.positions:
-                try:
-                    import market as _mkt
-                    prices[sym] = await _mkt.quote(sym)
-                except Exception:
-                    prices[sym] = p.positions[sym].entry
-            equity = p.equity(prices) if prices else p.cash
-            open_pnl = sum(
-                (prices.get(sym, pos.entry) - pos.entry) * pos.qty * (1 if pos.direction == "long" else -1)
-                for sym, pos in p.positions.items()
-            )
-            return (
-                f"📊 <b>Performans Raporu</b>\n\n"
-                f"Henüz kapalı işlem yok.\n\n"
-                f"<b>Anlık Durum:</b>\n"
-                f"Nakit: {p.cash:,.2f} USDT\n"
-                f"Toplam varlık: {equity:,.2f} USDT\n"
-                f"Açık pozisyon: {len(p.positions)}\n"
-                f"Açık K/Z: {'+' if open_pnl >= 0 else ''}{open_pnl:,.2f} USDT\n\n"
-                f"Trade yapmaya devam et, istatistikler burada görünür."
-            )
+        # Anlık fiyatları al
+        prices: dict = {}
+        for sym in p.positions:
+            try:
+                import market as _mkt
+                prices[sym] = await _mkt.quote(sym)
+            except Exception:
+                prices[sym] = p.positions[sym].entry
 
-        pnls = [x["pnl"] for x in sells]
-        wins = [p for p in pnls if p > 0]
-        losses = [p for p in pnls if p <= 0]
-        total_pnl = sum(pnls)
-        win_rate = len(wins) / n_total * 100 if n_total else 0
-        avg_win = sum(wins) / len(wins) if wins else 0
-        avg_loss = sum(losses) / len(losses) if losses else 0
-        profit_factor = sum(wins) / abs(sum(losses)) if losses and sum(losses) != 0 else 99.0
-        best = max(pnls) if pnls else 0
-        worst = min(pnls) if pnls else 0
-        expectancy = total_pnl / n_total if n_total else 0
+        # Portföy değerleri hesapla
+        equity = p.equity(prices) if prices else p.cash
+        pos_value = equity - p.cash
+        unrealized_pnl = 0.0
+        for sym, pos in p.positions.items():
+            cur = prices.get(sym, pos.entry)
+            pnl_v = (pos.entry - cur if pos.direction == "short" else cur - pos.entry) * pos.qty
+            unrealized_pnl += pnl_v
 
-        # Max drawdown (basit)
-        eq = 10000.0
-        peak = eq
-        mdd = 0.0
-        for x in h:
-            if x["side"] == "AL" or x["side"] == "SHORT":
-                eq -= x.get("usdt", 0)
-            elif x["side"] in ("SAT", "SHORT_KAP"):
-                eq += x.get("usdt", 0)
-                peak = max(peak, eq)
-                mdd = max(mdd, (peak - eq) / peak * 100)
-
-        # Emoji'ler
-        wr_emoji = "🟢" if win_rate >= 55 else ("🟡" if win_rate >= 45 else "🔴")
-        pf_emoji = "🟢" if profit_factor >= 1.5 else ("🟡" if profit_factor >= 1.0 else "🔴")
-        pnl_emoji = "📈" if total_pnl >= 0 else "📉"
-        sign = "+" if total_pnl >= 0 else ""
-
-        # Otonom istatistikleri
-        auto_block = ""
-        if self._engine:
-            e = self._engine
-            st = e.state
-            auto_block = (
-                f"\n\n<b>🤖 Otonom İstatistik:</b>\n"
-                f"Bugünkü işlem: {st.daily_trades}\n"
-                f"Ardışık zarar: {st.consecutive_losses}\n"
-                f"Risk kilidi: {'⚠️ Aktif' if st.risk_locked else '✅ Yok'}"
-            )
-
-        # Açık pozisyon özeti
-        open_block = ""
-        if p.positions:
-            prices2: dict = {}
-            for sym in p.positions:
-                try:
-                    import market as _mkt
-                    prices2[sym] = await _mkt.quote(sym)
-                except Exception:
-                    prices2[sym] = p.positions[sym].entry
-            open_pnl2 = sum(
-                (prices2.get(sym, pos.entry) - pos.entry) * pos.qty * (1 if pos.direction == "long" else -1)
-                for sym, pos in p.positions.items()
-            )
-            equity2 = p.equity(prices2)
-            op_sign = "+" if open_pnl2 >= 0 else ""
-            open_block = (
-                f"\n\n<b>💼 Anlık Portföy:</b>\n"
-                f"Nakit: {p.cash:,.2f} USDT\n"
-                f"Toplam varlık: {equity2:,.2f} USDT\n"
-                f"Açık pozisyon: {len(p.positions)}\n"
-                f"Açık K/Z: {op_sign}{open_pnl2:,.2f} USDT"
-            )
-
-        return (
-            f"📊 <b>Detaylı Performans Raporu</b>\n\n"
-            f"<b>📋 İşlem Özeti:</b>\n"
-            f"Toplam işlem: <b>{n_total}</b>\n"
-            f"Kazanan: <b>{len(wins)}</b>  Kaybeden: <b>{len(losses)}</b>\n"
-            f"Kazanma oranı: {wr_emoji} <b>{win_rate:.1f}%</b>\n"
-            f"Profit Factor: {pf_emoji} <b>{profit_factor:.2f}</b>\n\n"
-            f"<b>{pnl_emoji} K/Z Analizi:</b>\n"
-            f"Toplam K/Z: <b>{sign}{total_pnl:.2f} USDT</b>\n"
-            f"Ort. kazanç: +{avg_win:.2f} USDT\n"
-            f"Ort. kayıp: {avg_loss:.2f} USDT\n"
-            f"Beklenti: {'+' if expectancy >= 0 else ''}{expectancy:.2f} USDT/işlem\n"
-            f"En iyi: +{best:.2f} USDT\n"
-            f"En kötü: {worst:.2f} USDT\n\n"
-            f"<b>⚠️ Risk Metrikleri:</b>\n"
-            f"Max Drawdown: -{mdd:.2f}%"
-            f"{auto_block}"
-            f"{open_block}"
+        # ── Kısa Telegram özeti ────────────────────────────────────────────
+        short_msg = perf_mod.telegram_summary(
+            h, p.cash, equity, unrealized_pnl, n_positions=len(p.positions)
         )
+
+        # ── Otonom istatistik bloğu ────────────────────────────────────────
+        if self._engine:
+            st = self._engine.state
+            auto_status = "⚠️ Aktif" if st.risk_locked else "✅ Yok"
+            short_msg += (
+                f"\n\n<b>🤖 Otonom:</b>\n"
+                f"Bugün: {st.daily_trades} işlem  "
+                f"Zarar serisi: {st.consecutive_losses}  "
+                f"Risk kilidi: {auto_status}"
+            )
+
+        # ── Detaylı txt raporu yaz ─────────────────────────────────────────
+        try:
+            ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+            report_path = _Path(__file__).parent / f"report_{ts}.txt"
+
+            # Positions data for full_report
+            positions_data = []
+            for sym, pos in p.positions.items():
+                cur = prices.get(sym, pos.entry)
+                if pos.is_leveraged:
+                    upnl = (cur - pos.entry) * pos.qty
+                    upct = (cur / pos.entry - 1) * 100 * pos.leverage if pos.entry else 0
+                    side_label = f"LEV{pos.leverage}x"
+                elif pos.direction == "short":
+                    upnl = (pos.entry - cur) * pos.qty
+                    upct = (pos.entry / cur - 1) * 100 if cur else 0
+                    side_label = "SHORT"
+                else:
+                    upnl = (cur - pos.entry) * pos.qty
+                    upct = (cur / pos.entry - 1) * 100 if pos.entry else 0
+                    side_label = "SCALP" if pos.trade_style == "scalp" else "LONG"
+                positions_data.append({
+                    "symbol": sym, "side": side_label,
+                    "entry": pos.entry, "current": cur, "qty": pos.qty,
+                    "unrealized_pnl": upnl, "pnl_pct": upct,
+                    "stop": pos.stop, "target": pos.target,
+                })
+
+            rich_report = perf_mod.full_report(
+                h,
+                unrealized_pnl=unrealized_pnl if p.positions else None,
+                cash=p.cash,
+                pos_value=pos_value,
+                starting_equity=perf_mod.STARTING_CASH,
+                positions_data=positions_data or None,
+            )
+            plain = perf_mod._strip_rich(rich_report)
+            report_path.write_text(
+                f"trade-k Performans Raporu — {_dt.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"{'=' * 60}\n\n" + plain,
+                encoding="utf-8",
+            )
+            short_msg += f"\n\n📁 Detay: <code>{report_path.name}</code>"
+        except Exception:
+            pass
+
+        return short_msg
 
     async def _tarama(self) -> str:
         if not self._engine:

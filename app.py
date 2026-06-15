@@ -845,6 +845,14 @@ class TradeApp(App):
                 return
             for _warn in _rg.warnings:
                 log.write(f"[gold3]⚠ Risk Uyarısı:[/] {_warn}")
+            # Pozisyon sayısı limiti — otonom profil ile senkron
+            if self._auto_engine:
+                _max_pos = self._auto_engine.effective_profile.max_open_positions
+                _pc = risk_mod.check_position_count(self.portfolio, _max_pos)
+                for _blocker in _pc.blockers:
+                    log.write(f"[bold red3]⛔ Pozisyon Limiti:[/] {_blocker}")
+                if _pc.blockers:
+                    return
             if self._is_live:
                 _k, _s, _p = self._exchange_creds()
                 _ex = getattr(self.cfg, "exchange", "binance").upper()
@@ -882,8 +890,23 @@ class TradeApp(App):
             if sym in self.portfolio.positions:
                 raise ValueError(f"{sym}: zaten açık pozisyon var.")
             usdt = float(parts[2].replace(",", "."))
-            if usdt > self.portfolio.cash:
-                raise ValueError(f"Yetersiz bakiye: {self.portfolio.cash:,.2f} USDT mevcut.")
+            # Short için de tam risk kapısı
+            _prices_now_s = {s: tk.price for s, tk in self.feed.tickers.items() if tk.price > 0}
+            _rg_s = risk_mod.check_before_buy(sym, usdt, self.portfolio, _prices_now_s)
+            for _blocker in _rg_s.blockers:
+                log.write(f"[bold red3]⛔ Risk Engeli:[/] {_blocker}")
+            if _rg_s.blockers:
+                return
+            for _warn in _rg_s.warnings:
+                log.write(f"[gold3]⚠ Risk Uyarısı:[/] {_warn}")
+            # Pozisyon sayısı limiti
+            if self._auto_engine:
+                _max_pos_s = self._auto_engine.effective_profile.max_open_positions
+                _pc_s = risk_mod.check_position_count(self.portfolio, _max_pos_s)
+                for _blocker in _pc_s.blockers:
+                    log.write(f"[bold red3]⛔ Pozisyon Limiti:[/] {_blocker}")
+                if _pc_s.blockers:
+                    return
             price = await self._price_of(sym)
             # Short için varsayılan stop/target — Claude hemen ardından günceller
             default_stop = round(price * 1.05, 8)
@@ -3124,8 +3147,42 @@ class TradeApp(App):
     async def _show_performance(self) -> None:
         log = self.query_one("#log", RichLog)
 
+        # Anlık portföy değerlerini hesapla
+        all_prices = {s: tk.price for s, tk in self.feed.tickers.items()}
+        p = self.portfolio
+        pos_value = 0.0
+        total_unrealized = 0.0
+        positions_data: list[dict] = []
+        for sym, pos in p.positions.items():
+            cur = all_prices.get(sym) or pos.entry
+            upnl, upct = p.unrealized_pnl(sym, cur)
+            total_unrealized += upnl
+            if pos.is_leveraged:
+                val = max(0.0, pos.margin_usdt + (cur - pos.entry) * pos.qty)
+                side_label = f"LEV{pos.leverage}x"
+            elif pos.direction == "short":
+                val = max(0.0, pos.qty * pos.entry + (pos.entry - cur) * pos.qty)
+                side_label = "SHORT"
+            else:
+                val = pos.qty * cur
+                side_label = "SCALP" if pos.trade_style == "scalp" else "LONG"
+            pos_value += val
+            positions_data.append({
+                "symbol": sym, "side": side_label,
+                "entry": pos.entry, "current": cur, "qty": pos.qty,
+                "unrealized_pnl": upnl, "pnl_pct": upct,
+                "stop": pos.stop, "target": pos.target,
+            })
+
         # ── Profesyonel performans raporu (trade history bazlı) ──
-        log.write(perf_mod.full_report(self.portfolio.history))
+        log.write(perf_mod.full_report(
+            p.history,
+            unrealized_pnl=total_unrealized if p.positions else None,
+            cash=p.cash,
+            pos_value=pos_value,
+            starting_equity=perf_mod.STARTING_CASH,
+            positions_data=positions_data or None,
+        ))
 
         # ── AI öneri performansı (tracker bazlı) ──
         if self.tracker.recs:
