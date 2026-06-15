@@ -239,6 +239,15 @@ class MarketFeed:
         self._ws_task = asyncio.create_task(self._ws_loop())
         self._poll_task = asyncio.create_task(self._yahoo_loop())
 
+    async def stop(self) -> None:
+        tasks = [t for t in (self._ws_task, self._poll_task) if t and not t.done()]
+        for t in tasks:
+            t.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._ws_task = None
+        self._poll_task = None
+
     async def set_symbols(self, symbols: list[str]) -> None:
         self.symbols = symbols
         self.tickers = {s: t for s, t in self.tickers.items() if s in symbols}

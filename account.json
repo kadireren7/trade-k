@@ -1,5 +1,171 @@
 {
-  "cash": 10000.0,
-  "positions": {},
-  "history": []
+  "cash": 72.39847279683168,
+  "positions": {
+    "SOLUSDT": {
+      "qty": 0.1353546291283162,
+      "entry": 73.88,
+      "stop": 74.8,
+      "target": 79.4,
+      "trade_style": "spot",
+      "direction": "long",
+      "opened_at": 1781536071.924471,
+      "is_leveraged": false,
+      "leverage": 1,
+      "margin_usdt": 0.0,
+      "notional_usdt": 0.0,
+      "liquidation_price": 0.0
+    },
+    "ZECUSDT": {
+      "qty": 0.011294649159960469,
+      "entry": 531.225,
+      "stop": 559.0,
+      "target": 478.0,
+      "trade_style": "short",
+      "direction": "short",
+      "opened_at": 1781536264.1616228,
+      "is_leveraged": false,
+      "leverage": 1,
+      "margin_usdt": 0.0,
+      "notional_usdt": 0.0,
+      "liquidation_price": 0.0
+    },
+    "XLMUSDT": {
+      "qty": 28.590279305036287,
+      "entry": 0.22735,
+      "stop": 0.2415,
+      "target": 0.205,
+      "trade_style": "short",
+      "direction": "short",
+      "opened_at": 1781540411.1470308,
+      "is_leveraged": false,
+      "leverage": 1,
+      "margin_usdt": 0.0,
+      "notional_usdt": 0.0,
+      "liquidation_price": 0.0
+    },
+    "XRPUSDT": {
+      "qty": 4.667807686323323,
+      "entry": 1.2854,
+      "stop": 1.355,
+      "target": 1.18,
+      "trade_style": "short",
+      "direction": "short",
+      "opened_at": 1781540952.2928638,
+      "is_leveraged": false,
+      "leverage": 1,
+      "margin_usdt": 0.0,
+      "notional_usdt": 0.0,
+      "liquidation_price": 0.0
+    }
+  },
+  "history": [
+    {
+      "ts": 1781536071.9244766,
+      "side": "AL",
+      "symbol": "SOLUSDT",
+      "qty": 0.1353546291283162,
+      "price": 73.88,
+      "usdt": 10.0,
+      "pnl": null
+    },
+    {
+      "ts": 1781536073.4051998,
+      "side": "SHORT",
+      "symbol": "WLDUSDT",
+      "qty": 13.105086411663526,
+      "price": 0.61045,
+      "usdt": 8.0,
+      "pnl": null
+    },
+    {
+      "ts": 1781536073.456127,
+      "side": "SHORT",
+      "symbol": "NEARUSDT",
+      "qty": 3.1520882584712373,
+      "price": 2.538,
+      "usdt": 8.0,
+      "pnl": null
+    },
+    {
+      "ts": 1781536073.5056067,
+      "side": "AL",
+      "symbol": "XRPUSDT",
+      "qty": 7.125090267190885,
+      "price": 1.2463,
+      "usdt": 8.879999999999999,
+      "pnl": null
+    },
+    {
+      "ts": 1781536264.1616292,
+      "side": "SHORT",
+      "symbol": "ZECUSDT",
+      "qty": 0.011294649159960469,
+      "price": 531.225,
+      "usdt": 6.0,
+      "pnl": null
+    },
+    {
+      "ts": 1781540279.4401665,
+      "side": "SHORT_KAP",
+      "symbol": "WLDUSDT",
+      "qty": 13.105086411663526,
+      "price": 0.5709,
+      "usdt": 8.518306167581294,
+      "pnl": 0.5183061675812936
+    },
+    {
+      "ts": 1781540411.1470382,
+      "side": "SHORT",
+      "symbol": "XLMUSDT",
+      "qty": 28.590279305036287,
+      "price": 0.22735,
+      "usdt": 6.5,
+      "pnl": null
+    },
+    {
+      "ts": 1781540880.0998838,
+      "side": "SAT",
+      "symbol": "XRPUSDT",
+      "qty": 7.125090267190885,
+      "price": 1.2875,
+      "usdt": 9.173553719008265,
+      "pnl": 0.2935537190082653
+    },
+    {
+      "ts": 1781540952.292874,
+      "side": "SHORT",
+      "symbol": "XRPUSDT",
+      "qty": 4.667807686323323,
+      "price": 1.2854,
+      "usdt": 6.0,
+      "pnl": null
+    },
+    {
+      "ts": 1781541247.9901037,
+      "side": "SHORT_KAP",
+      "symbol": "NEARUSDT",
+      "qty": 3.1520882584712373,
+      "price": 2.495,
+      "usdt": 8.135539795114262,
+      "pnl": 0.13553979511426228
+    },
+    {
+      "ts": 1781541440.7148075,
+      "side": "AL",
+      "symbol": "ETHUSDT",
+      "qty": 0.003929870270857081,
+      "price": 1842.3,
+      "usdt": 7.24,
+      "pnl": null
+    },
+    {
+      "ts": 1781545945.0858407,
+      "side": "SAT",
+      "symbol": "ETHUSDT",
+      "qty": 0.003929870270857081,
+      "price": 1829.85,
+      "usdt": 7.191073115127829,
+      "pnl": -0.04892688487217084
+    }
+  ]
 }

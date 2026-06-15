@@ -17,6 +17,7 @@ import ai
 import config
 import indicators
 import market
+import notify as _notify
 from portfolio import (
     Portfolio, calc_liquidation_price, sanitize_levels,
     validate_leverage_trade, validate_stop_update,
@@ -58,7 +59,7 @@ AUTONOMOUS_PROFILES: dict[str, AutonomousProfile] = {
         max_leverage=2,
         leverage_min_confidence=70,
         leverage_min_rr=2.2,
-        leverage_max_risk_pct=0.008,
+        leverage_max_risk_pct=0.05,   # bakiyenin %5'i → 100$'da 5 USDT marj
     ),
     "dengeli": AutonomousProfile(
         key="dengeli", name="DENGELİ",
@@ -73,7 +74,7 @@ AUTONOMOUS_PROFILES: dict[str, AutonomousProfile] = {
         max_leverage=3,
         leverage_min_confidence=65,
         leverage_min_rr=2.0,
-        leverage_max_risk_pct=0.01,
+        leverage_max_risk_pct=0.08,   # bakiyenin %8'i → 100$'da 8 USDT marj
     ),
     "agresif": AutonomousProfile(
         key="agresif", name="AGRESİF",
@@ -88,7 +89,7 @@ AUTONOMOUS_PROFILES: dict[str, AutonomousProfile] = {
         max_leverage=5,
         leverage_min_confidence=60,
         leverage_min_rr=1.7,
-        leverage_max_risk_pct=0.02,
+        leverage_max_risk_pct=0.10,   # bakiyenin %10'u → 100$'da 10 USDT marj
     ),
 }
 
@@ -520,6 +521,21 @@ class AutonomousEngine:
                     f"{close_reason}"
                 )
                 self.log(f"   {result_str}")
+                # Telegram bildirimi
+                _last = (self.portfolio.history[-1]
+                         if self.portfolio.history else {})
+                _pnl = _last.get("pnl_usdt", 0.0)
+                _pct = _last.get("pnl_pct", 0.0)
+                _qty = _last.get("qty", 0.0)
+                _emoji = "✅" if _pnl >= 0 else "❌"
+                _sign = "+" if _pnl >= 0 else ""
+                asyncio.ensure_future(_notify.get().send(
+                    f"{_emoji} <b>OTONOM {pd.karar.replace('_', ' ')}</b>\n"
+                    f"Sembol: <code>{sym}</code>\n"
+                    f"Fiyat: {fill_price:,.4f} USDT\n"
+                    f"K/Z: {_sign}{_pnl:,.2f} USDT ({_sign}{_pct:.2f}%)\n"
+                    f"📋 {close_reason[:100]}"
+                ))
                 if self.sync_feed:
                     self.sync_feed()
                 return True, msg
@@ -922,6 +938,16 @@ class AutonomousEngine:
 
             if not candidates:
                 self.log("[grey58][OTONOM] Tarama tamamlandı — işlem yapılacak aday bulunamadı.[/]")
+                # Her taramada sessiz özet bildirimi (silent=True → ses çıkarmaz)
+                all_prices_snap = {s: t.price for s, t in self.feed.tickers.items() if t.price > 0}
+                eq = self.portfolio.equity(all_prices_snap)
+                n_pos = len(self.portfolio.positions)
+                asyncio.ensure_future(_notify.get().send(
+                    f"🔍 <b>Tarama tamamlandı</b> — aday yok\n"
+                    f"Varlık: {eq:,.2f} USDT | Pozisyon: {n_pos} | "
+                    f"İşlem: {self.state.daily_trades}/{p.max_daily_trades}",
+                    silent=True,
+                ))
 
             for s in candidates:
                 if not self.state.enabled:
@@ -1059,6 +1085,17 @@ class AutonomousEngine:
                         f"{usdt:,.0f} USDT | stop {_fp(stop_used)} | "
                         f"hedef {_fp(target_used)} | R/R {rr_actual:.2f}"
                     )
+                    pos_after = self.portfolio.positions.get(sym)
+                    qty = pos_after.qty if pos_after else 0.0
+                    asyncio.ensure_future(_notify.get().send(
+                        f"🤖🛒 <b>OTONOM ALIM</b>\n"
+                        f"Sembol: <code>{sym}</code>\n"
+                        f"İşlem: <b>{decision_label}</b>\n"
+                        f"Tutar: {usdt:,.2f} USDT | Fiyat: {_fp(price)}\n"
+                        f"Stop: {_fp(stop_used)} | Hedef: {_fp(target_used)}\n"
+                        f"R/R: {rr_actual:.2f} | Güven: %{s.basari_yuzdesi or 0:.0f}\n"
+                        f"📋 {s.gerekce[:100] if s.gerekce else ''}"
+                    ))
                     if self.sync_feed:
                         self.sync_feed()
                 except ValueError as e:
@@ -1133,13 +1170,15 @@ class AutonomousEngine:
         all_prices = {ss: t.price for ss, t in self.feed.tickers.items() if t.price > 0}
         equity = self.portfolio.equity(all_prices)
 
+        max_margin = equity * p.leverage_max_risk_pct
         margin = min(
-            s.tutar_usdt or (equity * p.leverage_max_risk_pct * 2),
-            equity * p.leverage_max_risk_pct * 2,
-            self.portfolio.cash * 0.20,  # nakitin max %20'si margin
+            s.tutar_usdt or max_margin,
+            max_margin,
+            self.portfolio.cash * 0.25,  # nakitin max %25'i margin
         )
-        if margin < 5:
-            self._log_event("skip", symbol=sym, reason="yetersiz nakit (margin < 5 USDT)")
+        if margin < 2:
+            self._log_event("skip", symbol=sym,
+                            reason=f"yetersiz nakit (margin {margin:.2f} < 2 USDT)")
             return
 
         valid, reason = validate_leverage_trade(
@@ -1180,6 +1219,15 @@ class AutonomousEngine:
                 f"stop {s.zarar_kes:,.4f} | hedef {s.kar_al:,.4f} | "
                 f"liq {liq:,.4f} | risk {risk:.2f} USDT"
             )
+            asyncio.ensure_future(_notify.get().send(
+                f"🤖⚡ <b>OTONOM KALDIRAÇ ALIM</b>\n"
+                f"Sembol: <code>{sym}</code>\n"
+                f"Kaldıraç: <b>{effective_lev}x</b>\n"
+                f"Marj: {margin:,.2f} USDT | Notional: {notional:,.2f} USDT\n"
+                f"Stop: {s.zarar_kes:,.4f} | Hedef: {s.kar_al:,.4f}\n"
+                f"Likidasyon: {liq:,.4f} | Risk: {risk:.2f} USDT\n"
+                f"📋 {s.gerekce[:100] if s.gerekce else ''}"
+            ))
             if self.sync_feed:
                 self.sync_feed()
         except ValueError as e:

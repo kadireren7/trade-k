@@ -1,0 +1,19 @@
+trade-k Report — 2026-06-15 20:54:32
+
+=== PORTFOLIO SUMMARY ===
+Varlık: 101 USDT | 4 pozisyon
+
+Cash: 72.40 USDT
+Open positions: 4
+  06.15 18:07  AL        SOLUSDT            73.8800
+  06.15 18:07  SHORT     WLDUSDT             0.6105
+  06.15 18:07  SHORT     NEARUSDT            2.5380
+  06.15 18:07  AL        XRPUSDT             1.2463
+  06.15 18:11  SHORT     ZECUSDT           531.2250
+  06.15 19:17  SHORT_KAP  WLDUSDT             0.5709
+  06.15 19:20  SHORT     XLMUSDT             0.2273
+  06.15 19:28  SAT       XRPUSDT             1.2875
+  06.15 19:29  SHORT     XRPUSDT             1.2854
+  06.15 19:34  SHORT_KAP  NEARUSDT            2.4950
+  06.15 19:37  AL        ETHUSDT          1842.3000
+  06.15 20:52  SAT       ETHUSDT          1829.8500

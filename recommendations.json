@@ -185,5 +185,38 @@
     "reason": "188M$ hacim güçlü, +4.4% momentum devam ediyor; %4+ hareket etmiş olması nedeniyle tutar ve basari temkinli tutuldu",
     "entry_price": 66.78,
     "status": "approved"
+  },
+  {
+    "id": "ddd57912",
+    "timestamp": 1781205208.1243734,
+    "symbol": "ETHUSDT",
+    "side": "AL",
+    "suggested_amount": 800.0,
+    "confidence_percent": 62,
+    "reason": "474M$ hacimle en likit kripto, NASDAQ yükselişiyle korelasyon güçlü. $1,625 yapısal desteğin dibine stop (yuvarlak sayıdan uzak), $1,780 direnç hedef. R/R 1.72.",
+    "entry_price": 1678.49,
+    "status": "rejected"
+  },
+  {
+    "id": "fb74b257",
+    "timestamp": 1781205208.124385,
+    "symbol": "SOLUSDT",
+    "side": "AL",
+    "suggested_amount": 700.0,
+    "confidence_percent": 58,
+    "reason": "195M$ hacimle endeks/ETH yükselişine eşlik ediyor, +4.7% pump sınırının çok altında. $63 desteğin altına stop, $73 yapısal direnç hedef. R/R 1.60.",
+    "entry_price": 66.78,
+    "status": "rejected"
+  },
+  {
+    "id": "80808173",
+    "timestamp": 1781205208.1243904,
+    "symbol": "GC=F",
+    "side": "AL",
+    "suggested_amount": 600.0,
+    "confidence_percent": 60,
+    "reason": "Altın güçlü yukarı trendde, bakır ve gümüş de pozitif — metal kompleksi uyumlu. $4,100 psikolojik desteğin hemen altına stop, hedef $4,342. R/R 1.60.",
+    "entry_price": 4193.5,
+    "status": "rejected"
   }
 ]

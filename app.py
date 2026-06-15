@@ -455,20 +455,21 @@ class TradeApp(App):
         )
         self._position_decisions = self._auto_engine.position_decisions
 
-        # Telegram komut botunu başlat (token varsa)
-        notify.get_bot().start(
-            portfolio=self.portfolio,
-            engine=self._auto_engine,
-            cfg=self.cfg,
-            feed=self.feed,
-        )
-
         # Günlük başlangıç varlığını ayarla
         self._daily_date = datetime.now().strftime("%Y-%m-%d")
         all_prices = {s: tk.price for s, tk in self.feed.tickers.items()}
         self._daily_start_equity = self.portfolio.equity(all_prices) or 10_000.0
 
         log = self.query_one("#log", RichLog)
+
+        # Telegram komut botunu başlat (token varsa)
+        notify.get_bot().start(
+            portfolio=self.portfolio,
+            engine=self._auto_engine,
+            cfg=self.cfg,
+            feed=self.feed,
+            log_fn=log.write,
+        )
         if first_run:
             log.write(t("setup.done", name=self.cfg.name))
         log.write(t("app.started", name=self.cfg.name))
@@ -731,7 +732,7 @@ class TradeApp(App):
             self.query_one("#account", AccountBar).update_view(
                 equity=cur_equity,
                 cash=self.portfolio.cash,
-                start=10_000.0,
+                start=self._daily_start_equity or cur_equity,
                 live_ok=bool(_k),
                 name=_name,
                 auto_enabled=auto_enabled,
@@ -752,7 +753,7 @@ class TradeApp(App):
             self.query_one("#acc-panel", AccountPanel).update_financials(
                 cash=self.portfolio.cash,
                 equity=cur_equity,
-                start=10_000.0,
+                start=self._daily_start_equity or cur_equity,
                 open_pnl=open_pnl,
                 daily_pnl=daily_pnl,
                 pos_count=len(self.portfolio.positions),
@@ -807,6 +808,7 @@ class TradeApp(App):
             "protect": "koru", "auto": "otonom", "approve": "onayla",
             "reject": "reddet", "add": "ekle", "remove": "cikar",
             "report": "performans", "rapor": "performans",
+            "performance": "performans",
             "reset": "sifirla", "apply": "uygula", "history": "gecmis",
             "details": "detay", "leverage": "kaldirac",
             "price": "fiyat", "alarm": "fiyat", "alert": "fiyat",
@@ -1101,6 +1103,11 @@ class TradeApp(App):
                     self.portfolio.cash = yeni
                     self.portfolio.save()
                     self._daily_start_equity = yeni
+                    # Otonom engine'i de güncelle — yoksa eski equity'ye göre zarar limiti tetiklenir
+                    if self._auto_engine:
+                        self._auto_engine.state.daily_start_equity = yeni
+                        self._auto_engine.state.risk_locked = False
+                        self._auto_engine.state.save(self._auto_engine._state_path)
                     if i18n.lang() == "tr":
                         log.write(
                             f"[bold green3]Paper bakiye {yeni:,.2f} USDT olarak ayarlandı.[/] "
@@ -1821,10 +1828,13 @@ class TradeApp(App):
         if not sub:
             n = notify.get()
             if n.enabled:
+                bot = notify.get_bot()
+                bot_status = "komut botu aktif" if (bot._task and not bot._task.done()) else "komut botu başlatılıyor..."
+                bot_status_en = "command bot active" if (bot._task and not bot._task.done()) else "command bot starting..."
                 if lang == "tr":
-                    log.write(f"[green3]✔ Telegram aktif[/]  chat_id: {self.cfg.telegram_chat_id}")
+                    log.write(f"[green3]✔ Telegram aktif[/]  chat_id: {self.cfg.telegram_chat_id}  [{bot_status}]")
                 else:
-                    log.write(f"[green3]✔ Telegram active[/]  chat_id: {self.cfg.telegram_chat_id}")
+                    log.write(f"[green3]✔ Telegram active[/]  chat_id: {self.cfg.telegram_chat_id}  [{bot_status_en}]")
             else:
                 if lang == "tr":
                     log.write("[grey58]Telegram kapalı. /bildirim bagla TOKEN CHAT_ID ile etkinleştir.[/]")
@@ -1848,13 +1858,21 @@ class TradeApp(App):
             self.cfg.telegram_chat_id = chat_id
             self.cfg.save()
             notify.configure(token, chat_id)
-            log.write(f"[green3]✔ Telegram bağlandı! {msg}[/]" if lang == "tr"
-                      else f"[green3]✔ Telegram connected! {msg}[/]")
+            notify.get_bot().start(
+                portfolio=self.portfolio,
+                engine=self._auto_engine,
+                cfg=self.cfg,
+                feed=self.feed,
+                log_fn=log.write,
+            )
+            log.write(f"[green3]✔ Telegram bağlandı! {msg} — komut botu aktif[/]" if lang == "tr"
+                      else f"[green3]✔ Telegram connected! {msg} — command bot active[/]")
 
         elif sub == "kes":
             self.cfg.telegram_token = ""
             self.cfg.telegram_chat_id = ""
             self.cfg.save()
+            notify.get_bot().stop()
             notify.configure("", "")
             log.write("[dark_orange]Telegram bildirimleri devre dışı.[/]" if lang == "tr"
                       else "[dark_orange]Telegram notifications disabled.[/]")
@@ -3202,6 +3220,16 @@ class TradeApp(App):
 
     def _save_watchlist(self) -> None:
         WATCHLIST_FILE.write_text(json.dumps(self.watchlist))
+
+    async def on_unmount(self) -> None:
+        bot = notify.get_bot()
+        bot_task = bot._task
+        bot.stop()
+        if self._auto_engine:
+            await self._auto_engine.stop()
+        await self.feed.stop()
+        if bot_task and not bot_task.done():
+            await asyncio.gather(bot_task, return_exceptions=True)
 
 
 if __name__ == "__main__":

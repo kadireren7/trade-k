@@ -1869,26 +1869,384 @@ class ReportsScreen(_MenuScreen):
 
     def _export_report(self, lang: str) -> None:
         import json as _json
-        from datetime import datetime
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        import math as _math
+        import statistics as _stats
+        from datetime import datetime as _dt
+
+        ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+        now_str = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
         out_path = Path(__file__).parent / f"report_{ts}.txt"
-        lines = [f"trade-k Report — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ""]
-        lines.append("=== PORTFOLIO SUMMARY ===")
-        lines.append(self._portfolio_summary)
+
+        SEP = "=" * 70
+        sep = "-" * 70
+
+        lines: list[str] = [
+            SEP,
+            f"  trade-k — TAM PERFORMANS RAPORU",
+            f"  Oluşturulma: {now_str}",
+            SEP,
+            "",
+        ]
+
         try:
-            acc = Path(__file__).parent / "account.json"
-            if acc.exists():
-                d = _json.loads(acc.read_text())
-                lines.append(f"\nCash: {d.get('cash', 0):,.2f} USDT")
-                lines.append(f"Open positions: {len(d.get('positions', {}))}")
-                for h in d.get("history", [])[-20:]:
-                    from datetime import datetime as dt
+            acc_path = Path(__file__).parent / "account.json"
+            cfg_path = Path(__file__).parent / "config.json"
+            auto_state_path = Path(__file__).parent / "autonomous_state.json"
+            recs_path = Path(__file__).parent / "recommendations.json"
+
+            d = _json.loads(acc_path.read_text()) if acc_path.exists() else {}
+            cash = d.get("cash", 0.0)
+            positions = d.get("positions", {})
+            history = d.get("history", [])
+
+            # Konfigürasyon bilgileri
+            cfg = _json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+            trading_mode = cfg.get("trading_mode", "paper").upper()
+            exchange_name = cfg.get("exchange", "binance").upper()
+            ai_provider = cfg.get("ai_provider", "claude").upper()
+            ai_model = cfg.get("model", "")
+            otonom_type = cfg.get("otonom_trade_type", "—")
+            otonom_profile = cfg.get("autonomous_mode", "—")
+
+            lines += [
+                "1. SİSTEM BİLGİLERİ",
+                sep,
+                f"  İşlem modu      : {trading_mode}",
+                f"  Borsa           : {exchange_name}",
+                f"  AI sağlayıcısı  : {ai_provider} ({ai_model})",
+                f"  Otonom trade    : {otonom_type.upper()}",
+                f"  Risk profili    : {otonom_profile.upper()}",
+                "",
+            ]
+
+            # Portföy anlık durumu
+            STARTING_CASH = 10_000.0
+            open_pos_value = 0.0
+            total_unrealized = 0.0
+
+            lines += [
+                "2. PORTFÖY DURUMU",
+                sep,
+                f"  {'Sembol':<12} {'Yön':<8} {'Giriş':>10} {'Miktar':>14} {'Değer':>10} {'Stop':>10} {'Hedef':>10} {'Süre':>8}",
+                f"  {'-'*12} {'-'*8} {'-'*10} {'-'*14} {'-'*10} {'-'*10} {'-'*10} {'-'*8}",
+            ]
+
+            if positions:
+                import time as _time
+                now_ts = _time.time()
+                for sym, pos in positions.items():
+                    entry = pos.get("entry", 0)
+                    qty = pos.get("qty", 0)
+                    direction = pos.get("direction", "long").upper()
+                    stop = pos.get("stop")
+                    target = pos.get("target")
+                    opened_at = pos.get("opened_at", now_ts)
+                    style = pos.get("trade_style", "spot").upper()
+                    is_lev = pos.get("is_leveraged", False)
+                    lev = pos.get("leverage", 1)
+                    pos_val = qty * entry
+                    open_pos_value += pos_val
+                    elapsed = now_ts - opened_at
+                    if elapsed < 3600:
+                        dur_str = f"{int(elapsed//60)}m"
+                    elif elapsed < 86400:
+                        dur_str = f"{int(elapsed//3600)}h{int((elapsed%3600)//60)}m"
+                    else:
+                        dur_str = f"{int(elapsed//86400)}g"
+                    yön_str = f"LEV{lev}x" if is_lev else direction
+                    stop_str = f"{stop:.4f}" if stop else "—"
+                    tgt_str = f"{target:.4f}" if target else "—"
                     lines.append(
-                        f"  {dt.fromtimestamp(h['ts']).strftime('%m.%d %H:%M')}  "
-                        f"{h['side']:8}  {h['symbol']:12}  {h['price']:>12.4f}"
+                        f"  {sym:<12} {yön_str:<8} {entry:>10.4f} {qty:>14.6f} "
+                        f"{pos_val:>10.2f} {stop_str:>10} {tgt_str:>10} {dur_str:>8}"
                     )
+            else:
+                lines.append("  (Açık pozisyon yok)")
+
+            estimated_equity = cash + open_pos_value
+            total_pnl_all = estimated_equity - STARTING_CASH
+            total_pnl_pct = total_pnl_all / STARTING_CASH * 100
+
+            lines += [
+                "",
+                f"  Nakit               : {cash:>12,.2f} USDT",
+                f"  Açık pozisyon değeri: {open_pos_value:>12,.2f} USDT (giriş bazlı)",
+                f"  Tahmini toplam varlık: {estimated_equity:>11,.2f} USDT",
+                f"  Başlangıç (paper)   : {STARTING_CASH:>12,.2f} USDT",
+                f"  Toplam K/Z (tahmin) : {total_pnl_all:>+12,.2f} USDT  ({total_pnl_pct:+.2f}%)",
+                "",
+            ]
+
+            # İşlem geçmişi — tüm satışlar
+            sells = [h for h in history if h.get("side") in ("SAT", "SHORT_KAP") and h.get("pnl") is not None]
+            buys = [h for h in history if h.get("side") in ("AL", "SHORT")]
+
+            lines += [
+                "3. İŞLEM GEÇMİŞİ (TÜM KAYITLAR)",
+                sep,
+                f"  {'Zaman':<16} {'Yön':<10} {'Sembol':<12} {'Miktar':>12} {'Fiyat':>12} {'K/Z USDT':>10}",
+                f"  {'-'*16} {'-'*10} {'-'*12} {'-'*12} {'-'*12} {'-'*10}",
+            ]
+            for h in history:
+                t_str = _dt.fromtimestamp(h["ts"]).strftime("%m.%d %H:%M:%S")
+                side = h.get("side", "?")
+                sym = h.get("symbol", "?")
+                qty = h.get("qty", 0)
+                price = h.get("price", 0)
+                pnl = h.get("pnl")
+                pnl_str = f"{pnl:+.4f}" if pnl is not None else "—"
+                lines.append(
+                    f"  {t_str:<16} {side:<10} {sym:<12} {qty:>12.6f} {price:>12.4f} {pnl_str:>10}"
+                )
+
+            lines += ["", f"  Toplam kayıt: {len(history)}  |  Alım: {len(buys)}  |  Kapanan: {len(sells)}", ""]
+
+            # Performans metrikleri
+            lines += [
+                "4. PERFORMANS METRİKLERİ",
+                sep,
+            ]
+
+            if sells:
+                pnls = [s["pnl"] for s in sells]
+                wins = [p for p in pnls if p > 0]
+                losses_list = [p for p in pnls if p <= 0]
+                n_total = len(pnls)
+                n_wins = len(wins)
+                n_losses = len(losses_list)
+                win_rate = n_wins / n_total * 100
+                avg_win = sum(wins) / n_wins if wins else 0.0
+                avg_loss = sum(losses_list) / n_losses if losses_list else 0.0
+                gross_win = sum(wins)
+                gross_loss = abs(sum(losses_list)) or 1e-9
+                profit_factor = gross_win / gross_loss
+                total_closed_pnl = sum(pnls)
+                best_trade = max(pnls)
+                worst_trade = min(pnls)
+                expectancy = total_closed_pnl / n_total
+
+                # Ardışık kazanma/kaybetme serileri
+                max_consec_wins = 0
+                max_consec_losses = 0
+                cur_w, cur_l = 0, 0
+                for p in pnls:
+                    if p > 0:
+                        cur_w += 1; cur_l = 0
+                        max_consec_wins = max(max_consec_wins, cur_w)
+                    else:
+                        cur_l += 1; cur_w = 0
+                        max_consec_losses = max(max_consec_losses, cur_l)
+
+                # Max drawdown (equity curve bazlı)
+                eq = STARTING_CASH
+                peak = eq
+                mdd_val = 0.0
+                mdd_peak = eq
+                mdd_trough = eq
+                for h in history:
+                    if h.get("side") in ("AL", "SHORT"):
+                        eq -= h.get("usdt", 0)
+                    elif h.get("side") in ("SAT", "SHORT_KAP"):
+                        eq += h.get("usdt", 0)
+                        if eq > peak:
+                            peak = eq
+                        dd = (peak - eq) / peak * 100 if peak > 0 else 0
+                        if dd > mdd_val:
+                            mdd_val = dd
+                            mdd_peak = peak
+                            mdd_trough = eq
+
+                # Günlük getiriler (Sharpe için)
+                import time as _time2
+                daily: dict[str, float] = {}
+                eq2 = STARTING_CASH
+                for h in history:
+                    if h.get("side") in ("AL", "SHORT"):
+                        eq2 -= h.get("usdt", 0)
+                    elif h.get("side") in ("SAT", "SHORT_KAP") and h.get("pnl") is not None:
+                        pnl_val = h["pnl"]
+                        day = _dt.fromtimestamp(h["ts"]).strftime("%Y-%m-%d")
+                        daily[day] = daily.get(day, 0.0) + (pnl_val / max(eq2, 1) * 100)
+                        eq2 += h.get("usdt", 0)
+
+                daily_rets = list(daily.values())
+                RISK_FREE_DAILY = 0.05 / 365 * 100
+                sharpe = 0.0
+                sortino = 0.0
+                if len(daily_rets) >= 3:
+                    excess = [r - RISK_FREE_DAILY for r in daily_rets]
+                    avg_ex = sum(excess) / len(excess)
+                    std_ex = (_stats.stdev(excess) if len(excess) > 1 else 1.0) or 1.0
+                    sharpe = avg_ex / std_ex * _math.sqrt(365)
+                    downside = [r for r in excess if r < 0]
+                    if downside:
+                        dd_std = (_stats.stdev(downside) if len(downside) > 1 else abs(downside[0])) or 1.0
+                        sortino = avg_ex / dd_std * _math.sqrt(365)
+                    else:
+                        sortino = 99.0
+
+                # Calmar
+                calmar = 0.0
+                if sells:
+                    first_ts = sells[0]["ts"]
+                    last_ts = sells[-1]["ts"]
+                    elapsed_years = (last_ts - first_ts) / (365 * 86400) or (1 / 365)
+                    eq_series_end = STARTING_CASH + total_closed_pnl
+                    annual_ret = ((eq_series_end - STARTING_CASH) / STARTING_CASH * 100) / elapsed_years
+                    calmar = annual_ret / mdd_val if mdd_val > 0 else 99.0
+
+                def sharpe_label(s: float) -> str:
+                    if s > 2.0: return "Mükemmel ✅"
+                    if s > 1.0: return "İyi ✅"
+                    if s > 0.5: return "Kabul edilebilir 🟡"
+                    if s > 0:   return "Zayıf ⚠️"
+                    return "Negatif ❌"
+
+                def wr_label(w: float) -> str:
+                    if w >= 60: return "Güçlü ✅"
+                    if w >= 50: return "Yeterli 🟡"
+                    return "Düşük ❌"
+
+                def pf_label(pf: float) -> str:
+                    if pf >= 2.0: return "Mükemmel ✅"
+                    if pf >= 1.5: return "İyi ✅"
+                    if pf >= 1.0: return "Kırbaşı eşik 🟡"
+                    return "Zarar ❌"
+
+                lines += [
+                    f"  {'Metrik':<30} {'Değer':>15}  {'Yorum'}",
+                    f"  {'-'*30} {'-'*15}  {'-'*25}",
+                    f"  {'Toplam kapalı işlem':<30} {n_total:>15}",
+                    f"  {'Kazanan işlem':<30} {n_wins:>15}",
+                    f"  {'Kaybeden işlem':<30} {n_losses:>15}",
+                    f"  {'Kazanma oranı':<30} {win_rate:>14.1f}%  {wr_label(win_rate)}",
+                    f"  {'Profit Factor':<30} {profit_factor:>15.3f}  {pf_label(profit_factor)}",
+                    f"  {'Beklenti (USDT/işlem)':<30} {expectancy:>+14.2f}",
+                    f"  {'Ort. kazanç':<30} {avg_win:>+14.2f} USDT",
+                    f"  {'Ort. kayıp':<30} {avg_loss:>+14.2f} USDT",
+                    f"  {'En iyi işlem':<30} {best_trade:>+14.2f} USDT",
+                    f"  {'En kötü işlem':<30} {worst_trade:>+14.2f} USDT",
+                    f"  {'Toplam kapalı K/Z':<30} {total_closed_pnl:>+14.2f} USDT",
+                    f"  {'Max ardışık kazanç':<30} {max_consec_wins:>15}",
+                    f"  {'Max ardışık kayıp':<30} {max_consec_losses:>15}",
+                    "",
+                    f"  {'Risk-Adjusted Metrikler':<30}",
+                    f"  {'-'*30}",
+                    f"  {'Sharpe Ratio (yıllık)':<30} {sharpe:>15.3f}  {sharpe_label(sharpe)}",
+                    f"  {'Sortino Ratio':<30} {sortino:>15.3f}  (sadece aşağı volatilite)",
+                    f"  {'Calmar Ratio':<30} {calmar:>15.3f}  (yıllık getiri / MDD)",
+                    f"  {'Max Drawdown':<30} {mdd_val:>14.2f}%  peak:{mdd_peak:,.2f}→trough:{mdd_trough:,.2f}",
+                    f"  {'Günlük getiri sayısı':<30} {len(daily_rets):>15}  (gün bazlı)",
+                    "",
+                ]
+
+                # Günlük özet tablosu
+                if daily:
+                    lines += [
+                        "5. GÜNLÜK K/Z DAĞILIMI",
+                        sep,
+                        f"  {'Tarih':<12} {'K/Z USDT':>10} {'%':>7}  {'Bar'}",
+                        f"  {'-'*12} {'-'*10} {'-'*7}  {'-'*25}",
+                    ]
+                    for day_k in sorted(daily.keys()):
+                        day_pnl_pct = daily[day_k]
+                        # Günlük USDT K/Z'ı history'den hesapla
+                        day_pnl_usdt = sum(
+                            h["pnl"] for h in sells
+                            if _dt.fromtimestamp(h["ts"]).strftime("%Y-%m-%d") == day_k
+                        )
+                        bar_len = min(25, max(0, int(abs(day_pnl_usdt) / 0.5)))
+                        sign2 = "+" if day_pnl_usdt >= 0 else "-"
+                        bar = ("█" * bar_len) if day_pnl_usdt >= 0 else ("▓" * bar_len)
+                        lines.append(
+                            f"  {day_k:<12} {day_pnl_usdt:>+10.4f} {day_pnl_pct:>+6.2f}%  {bar}"
+                        )
+                    lines.append("")
+
+            else:
+                lines += [
+                    "  Henüz kapalı işlem yok.",
+                    "  (Açık pozisyonlar kapandıkça metrikler burada görünür.)",
+                    "",
+                ]
+
+            # Otonom trading istatistikleri
+            auto_state = {}
+            if auto_state_path.exists():
+                try:
+                    auto_state = _json.loads(auto_state_path.read_text())
+                except Exception:
+                    pass
+
+            section_num = "6" if sells and daily else "5"
+            lines += [
+                f"{section_num}. OTONOM MOD İSTATİSTİKLERİ",
+                sep,
+                f"  Durum              : {'AÇIK' if auto_state.get('enabled') else 'KAPALI'}",
+                f"  Bugünkü işlemler   : {auto_state.get('daily_trades', 0)}",
+                f"  Ardışık kayıp      : {auto_state.get('consecutive_losses', 0)}",
+                f"  Risk kilidi        : {'EVET ⚠️' if auto_state.get('risk_locked') else 'Hayır ✅'}",
+                f"  Günlük kaldıraç    : {auto_state.get('daily_leveraged_trades', 0)}",
+                f"  Kaldıraç kilidi    : {'EVET ⚠️' if auto_state.get('daily_leverage_locked') else 'Hayır ✅'}",
+                f"  Günlük başl. varlık: {auto_state.get('daily_start_equity', 0):,.2f} USDT",
+                "",
+            ]
+
+            # AI öneri istatistikleri
+            recs_section = int(section_num) + 1
+            lines += [
+                f"{recs_section}. AI ÖNERİ PERFORMANSI",
+                sep,
+            ]
+            if recs_path.exists():
+                try:
+                    recs = _json.loads(recs_path.read_text())
+                    n_recs = len(recs)
+                    n_approved = sum(1 for r in recs if r.get("status") == "approved")
+                    n_rejected = sum(1 for r in recs if r.get("status") == "rejected")
+                    n_expired = sum(1 for r in recs if r.get("status") == "expired")
+                    n_pending = sum(1 for r in recs if r.get("status") == "pending")
+
+                    # Onaylanan önerilerin getirisi (entry fiyat varsa)
+                    approved_recs = [r for r in recs if r.get("status") == "approved" and r.get("entry_price")]
+                    lines += [
+                        f"  Toplam öneri       : {n_recs}",
+                        f"  Onaylanan          : {n_approved}  ({n_approved/n_recs*100:.1f}% kabul oranı)" if n_recs else f"  Onaylanan          : {n_approved}",
+                        f"  Reddedilen         : {n_rejected}",
+                        f"  Süresi dolmuş      : {n_expired}",
+                        f"  Bekleyen           : {n_pending}",
+                    ]
+
+                    # Güven dağılımı
+                    if approved_recs:
+                        conf_vals = [r.get("confidence_percent", 0) for r in approved_recs]
+                        avg_conf = sum(conf_vals) / len(conf_vals)
+                        lines.append(f"  Ort. güven (onay.) : %{avg_conf:.1f}")
+
+                    # Sembol dağılımı
+                    from collections import Counter as _Counter
+                    sym_counts = _Counter(r.get("symbol", "?") for r in recs if r.get("status") == "approved")
+                    if sym_counts:
+                        top_syms = sym_counts.most_common(5)
+                        lines.append(f"  En çok işlem gören : {', '.join(f'{s}({c})' for s, c in top_syms)}")
+                    lines.append("")
+                except Exception as e:
+                    lines.append(f"  (öneri verisi okunamadı: {e})")
+                    lines.append("")
+            else:
+                lines += ["  (recommendations.json bulunamadı)", ""]
+
         except Exception as e:
-            lines.append(f"(portfolio read error: {e})")
+            lines += [f"  HATA: Rapor oluşturulurken sorun: {e}", ""]
+
+        lines += [
+            SEP,
+            "  Bu rapor trade-k tarafından otomatik oluşturulmuştur.",
+            f"  Güvenilirlik notu: Tüm işlemler PAPER (sanal) modunda gerçekleşmiştir.",
+            f"  Gerçek para performansı ile karşılaştırma yapılmamalıdır.",
+            SEP,
+        ]
+
         out_path.write_text("\n".join(lines), encoding="utf-8")
         msg = f"✓ Dışa aktarıldı: {out_path.name}" if lang == "tr" else f"✓ Exported: {out_path.name}"
         self._flash_msg("rep-msg", msg)
