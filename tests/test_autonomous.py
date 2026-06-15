@@ -131,35 +131,35 @@ def test_otonom_profiller_var():
 
 def test_guvenli_profil_degerleri():
     p = AUTONOMOUS_PROFILES["guvenli"]
-    assert p.max_open_positions == 1
-    assert p.max_trade_percent == 0.05
-    assert p.max_daily_trades == 1
-    assert p.min_confidence == 65
-    assert p.min_risk_reward == 2.0
-    assert p.max_consecutive_losses == 1
-    assert p.daily_loss_limit_percent == 1.0
-
-
-def test_dengeli_profil_degerleri():
-    p = AUTONOMOUS_PROFILES["dengeli"]
     assert p.max_open_positions == 2
-    assert p.max_trade_percent == 0.10
+    assert p.max_trade_percent == 0.08
     assert p.max_daily_trades == 3
-    assert p.min_confidence == 55
-    assert p.min_risk_reward == 1.5
+    assert p.min_confidence == 60
+    assert p.min_risk_reward == 1.8
     assert p.max_consecutive_losses == 2
     assert p.daily_loss_limit_percent == 2.0
 
 
-def test_agresif_profil_degerleri():
-    p = AUTONOMOUS_PROFILES["agresif"]
-    assert p.max_open_positions == 3
-    assert p.max_trade_percent == 0.15
-    assert p.max_daily_trades == 5
+def test_dengeli_profil_degerleri():
+    p = AUTONOMOUS_PROFILES["dengeli"]
+    assert p.max_open_positions == 4
+    assert p.max_trade_percent == 0.12
+    assert p.max_daily_trades == 6
     assert p.min_confidence == 50
     assert p.min_risk_reward == 1.3
-    assert p.max_consecutive_losses == 4  # güncellendi: agresif modda daha uzun tolerans
-    assert p.daily_loss_limit_percent == 3.0
+    assert p.max_consecutive_losses == 3
+    assert p.daily_loss_limit_percent == 4.0
+
+
+def test_agresif_profil_degerleri():
+    p = AUTONOMOUS_PROFILES["agresif"]
+    assert p.max_open_positions == 6
+    assert p.max_trade_percent == 0.18
+    assert p.max_daily_trades == 12
+    assert p.min_confidence == 42
+    assert p.min_risk_reward == 1.1
+    assert p.max_consecutive_losses == 5
+    assert p.daily_loss_limit_percent == 6.0
 
 
 def test_engine_varsayilan_profil_dengeli(engine):
@@ -195,13 +195,14 @@ def test_gecersiz_mod_hata_mesaji(engine):
 # ── pozisyon limiti testleri ─────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_guvenli_modda_1_pozisyondan_fazla_acilmaz(portfolio, tmp_path, monkeypatch):
-    """Güvenli modda max 1 pozisyon — 2. tarama atlanır."""
+async def test_guvenli_modda_2_pozisyon_limiti(portfolio, tmp_path, monkeypatch):
+    """Güvenli modda max 2 pozisyon — 2 açıkken tarama atlanır."""
     eng = make_engine(portfolio, tmp_path, "guvenli")
     eng.state.enabled = True
     eng.state.daily_date = "2026-06-11"
 
-    portfolio.buy("BTCUSDT", 500, 50000.0)  # zaten 1 pozisyon var
+    portfolio.buy("BTCUSDT", 500, 50000.0)
+    portfolio.buy("ETHUSDT", 300, 2000.0)  # limit doldu
 
     called = []
 
@@ -212,19 +213,21 @@ async def test_guvenli_modda_1_pozisyondan_fazla_acilmaz(portfolio, tmp_path, mo
     monkeypatch.setattr(ai, "scan_market_filtered", mock_scan)
     await eng._run_scan()
 
-    assert not called, "Güvenli modda 1 pozisyon doluyken tarama yapılmamalı"
-    assert len(portfolio.positions) == 1
+    assert not called, "Güvenli modda 2 pozisyon doluyken tarama yapılmamalı"
+    assert len(portfolio.positions) == 2
 
 
 @pytest.mark.asyncio
-async def test_dengeli_modda_2_pozisyon_limiti(portfolio, tmp_path, monkeypatch):
-    """Dengeli modda max 2 pozisyon — 2 açıkken tarama atlanır."""
+async def test_dengeli_modda_4_pozisyon_limiti(portfolio, tmp_path, monkeypatch):
+    """Dengeli modda max 4 pozisyon — 4 açıkken tarama atlanır."""
     eng = make_engine(portfolio, tmp_path, "dengeli")
     eng.state.enabled = True
     eng.state.daily_date = "2026-06-11"
 
-    portfolio.buy("BTCUSDT", 500, 50000.0)
-    portfolio.buy("ETHUSDT", 300, 2000.0)
+    portfolio.buy("BTCUSDT", 200, 50000.0)
+    portfolio.buy("ETHUSDT", 200, 2000.0)
+    portfolio.buy("SOLUSDT", 200, 100.0)
+    portfolio.buy("BNBUSDT", 200, 600.0)
 
     called = []
 
@@ -235,19 +238,22 @@ async def test_dengeli_modda_2_pozisyon_limiti(portfolio, tmp_path, monkeypatch)
     monkeypatch.setattr(ai, "scan_market_filtered", mock_scan)
     await eng._run_scan()
 
-    assert not called, "Dengeli modda 2 pozisyon doluyken tarama yapılmamalı"
+    assert not called, "Dengeli modda 4 pozisyon doluyken tarama yapılmamalı"
 
 
 @pytest.mark.asyncio
-async def test_agresif_modda_3_pozisyon_limiti(portfolio, tmp_path, monkeypatch):
-    """Agresif modda max 3 pozisyon — 3 açıkken tarama atlanır."""
+async def test_agresif_modda_6_pozisyon_limiti(portfolio, tmp_path, monkeypatch):
+    """Agresif modda max 6 pozisyon — 6 açıkken tarama atlanır."""
     eng = make_engine(portfolio, tmp_path, "agresif")
     eng.state.enabled = True
     eng.state.daily_date = "2026-06-11"
 
-    portfolio.buy("BTCUSDT", 500, 50000.0)
-    portfolio.buy("ETHUSDT", 300, 2000.0)
-    portfolio.buy("SOLUSDT", 200, 100.0)
+    portfolio.buy("BTCUSDT", 100, 50000.0)
+    portfolio.buy("ETHUSDT", 100, 2000.0)
+    portfolio.buy("SOLUSDT", 100, 100.0)
+    portfolio.buy("BNBUSDT", 100, 600.0)
+    portfolio.buy("XRPUSDT", 100, 2.0)
+    portfolio.buy("AVAXUSDT", 100, 40.0)
 
     called = []
 
@@ -258,19 +264,21 @@ async def test_agresif_modda_3_pozisyon_limiti(portfolio, tmp_path, monkeypatch)
     monkeypatch.setattr(ai, "scan_market_filtered", mock_scan)
     await eng._run_scan()
 
-    assert not called, "Agresif modda 3 pozisyon doluyken tarama yapılmamalı"
+    assert not called, "Agresif modda 6 pozisyon doluyken tarama yapılmamalı"
 
 
 @pytest.mark.asyncio
-async def test_agresif_modda_2_pozisyon_varsa_tarama_devam_eder(portfolio, tmp_path, monkeypatch):
-    """Agresif modda 2 pozisyon varken tarama devam etmeli (limit 3)."""
+async def test_agresif_modda_4_pozisyon_varsa_tarama_devam_eder(portfolio, tmp_path, monkeypatch):
+    """Agresif modda 4 pozisyon varken tarama devam etmeli (limit 6)."""
     eng = make_engine(portfolio, tmp_path, "agresif")
     eng.state.enabled = True
     eng.state.daily_date = "2026-06-11"
     eng.state.daily_start_equity = portfolio.cash
 
-    portfolio.buy("BTCUSDT", 500, 50000.0)
-    portfolio.buy("ETHUSDT", 300, 2000.0)
+    portfolio.buy("BTCUSDT", 200, 50000.0)
+    portfolio.buy("ETHUSDT", 200, 2000.0)
+    portfolio.buy("SOLUSDT", 200, 100.0)
+    portfolio.buy("BNBUSDT", 200, 600.0)
 
     called = []
 
@@ -281,21 +289,21 @@ async def test_agresif_modda_2_pozisyon_varsa_tarama_devam_eder(portfolio, tmp_p
     monkeypatch.setattr(ai, "scan_market_filtered", mock_scan)
     await eng._run_scan()
 
-    assert called, "Agresif modda 2 pozisyon varken tarama yapılmalı (limit 3)"
+    assert called, "Agresif modda 4 pozisyon varken tarama yapılmalı (limit 6)"
 
 
 # ── confidence eşiği testleri ─────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_guvenli_mod_confidence_64_atlar(portfolio, tmp_path, monkeypatch):
-    """Güvenli modda confidence < 65 olan aday atlanır."""
+async def test_guvenli_mod_confidence_59_atlar(portfolio, tmp_path, monkeypatch):
+    """Güvenli modda confidence < 60 olan aday atlanır."""
     eng = make_engine(portfolio, tmp_path, "guvenli")
     eng.state.enabled = True
     eng.state.daily_date = "2026-06-11"
 
     mock_response = (
         'ONERILER: [{"islem":"AL","sembol":"BTCUSDT","tutar_usdt":500,'
-        '"basari_yuzdesi":64,"zarar_kes":49000,"kar_al":53000,"gerekce":"test"}]'
+        '"basari_yuzdesi":59,"zarar_kes":49000,"kar_al":53000,"gerekce":"test"}]'
     )
 
     async def mock_scan(*a, **kw):
@@ -304,12 +312,12 @@ async def test_guvenli_mod_confidence_64_atlar(portfolio, tmp_path, monkeypatch)
     monkeypatch.setattr(ai, "scan_market_filtered", mock_scan)
     await eng._run_scan()
 
-    assert len(portfolio.positions) == 0, "confidence 64 < 65 → güvenli modda atlanmalı"
+    assert len(portfolio.positions) == 0, "confidence 59 < 60 → güvenli modda atlanmalı"
 
 
 @pytest.mark.asyncio
-async def test_guvenli_mod_confidence_65_kabul_eder(portfolio, tmp_path, monkeypatch):
-    """Güvenli modda confidence = 65 olan aday kabul edilir (R/R uygun ise)."""
+async def test_guvenli_mod_confidence_60_kabul_eder(portfolio, tmp_path, monkeypatch):
+    """Güvenli modda confidence = 60 olan aday kabul edilir (R/R uygun ise)."""
     eng = make_engine(portfolio, tmp_path, "guvenli")
     eng.state.enabled = True
     eng.state.daily_date = "2026-06-11"
@@ -317,9 +325,9 @@ async def test_guvenli_mod_confidence_65_kabul_eder(portfolio, tmp_path, monkeyp
 
     mock_response = (
         'ONERILER: [{"islem":"AL","sembol":"BTCUSDT","tutar_usdt":500,'
-        '"basari_yuzdesi":65,"zarar_kes":49000,"kar_al":53000,"gerekce":"güçlü sinyal"}]'
+        '"basari_yuzdesi":60,"zarar_kes":49000,"kar_al":53000,"gerekce":"güçlü sinyal"}]'
     )
-    # BTC=50000, stop=49000 (risk=1000), hedef=53000 (gain=3000) → R/R=3.0 ≥ 2.0 ✓
+    # BTC=50000, stop=49000 (risk=1000), hedef=53000 (gain=3000) → R/R=3.0 ≥ 1.8 ✓
 
     async def mock_scan(*a, **kw):
         return mock_response
@@ -327,19 +335,19 @@ async def test_guvenli_mod_confidence_65_kabul_eder(portfolio, tmp_path, monkeyp
     monkeypatch.setattr(ai, "scan_market_filtered", mock_scan)
     await eng._run_scan()
 
-    assert len(portfolio.positions) == 1, "confidence 65 = min → güvenli modda kabul edilmeli"
+    assert len(portfolio.positions) == 1, "confidence 60 = min → güvenli modda kabul edilmeli"
 
 
 @pytest.mark.asyncio
-async def test_dengeli_mod_confidence_54_atlar(portfolio, tmp_path, monkeypatch):
-    """Dengeli modda confidence < 55 olan aday atlanır."""
+async def test_dengeli_mod_confidence_49_atlar(portfolio, tmp_path, monkeypatch):
+    """Dengeli modda confidence < 50 olan aday atlanır."""
     eng = make_engine(portfolio, tmp_path, "dengeli")
     eng.state.enabled = True
     eng.state.daily_date = "2026-06-11"
 
     mock_response = (
         'ONERILER: [{"islem":"AL","sembol":"BTCUSDT","tutar_usdt":500,'
-        '"basari_yuzdesi":54,"zarar_kes":49000,"kar_al":52500,"gerekce":"test"}]'
+        '"basari_yuzdesi":49,"zarar_kes":49000,"kar_al":52500,"gerekce":"test"}]'
     )
 
     async def mock_scan(*a, **kw):
@@ -348,19 +356,19 @@ async def test_dengeli_mod_confidence_54_atlar(portfolio, tmp_path, monkeypatch)
     monkeypatch.setattr(ai, "scan_market_filtered", mock_scan)
     await eng._run_scan()
 
-    assert len(portfolio.positions) == 0, "confidence 54 < 55 → dengeli modda atlanmalı"
+    assert len(portfolio.positions) == 0, "confidence 49 < 50 → dengeli modda atlanmalı"
 
 
 @pytest.mark.asyncio
-async def test_agresif_mod_confidence_49_atlar(portfolio, tmp_path, monkeypatch):
-    """Agresif modda confidence < 50 olan aday atlanır."""
+async def test_agresif_mod_confidence_41_atlar(portfolio, tmp_path, monkeypatch):
+    """Agresif modda confidence < 42 olan aday atlanır."""
     eng = make_engine(portfolio, tmp_path, "agresif")
     eng.state.enabled = True
     eng.state.daily_date = "2026-06-11"
 
     mock_response = (
         'ONERILER: [{"islem":"AL","sembol":"BTCUSDT","tutar_usdt":500,'
-        '"basari_yuzdesi":49,"zarar_kes":49000,"kar_al":52000,"gerekce":"test"}]'
+        '"basari_yuzdesi":41,"zarar_kes":49000,"kar_al":52000,"gerekce":"test"}]'
     )
 
     async def mock_scan(*a, **kw):
@@ -369,12 +377,12 @@ async def test_agresif_mod_confidence_49_atlar(portfolio, tmp_path, monkeypatch)
     monkeypatch.setattr(ai, "scan_market_filtered", mock_scan)
     await eng._run_scan()
 
-    assert len(portfolio.positions) == 0, "confidence 49 < 50 → agresif modda atlanmalı"
+    assert len(portfolio.positions) == 0, "confidence 41 < 42 → agresif modda atlanmalı"
 
 
 @pytest.mark.asyncio
-async def test_agresif_mod_confidence_50_kabul_eder(portfolio, tmp_path, monkeypatch):
-    """Agresif modda confidence = 50 olan aday kabul edilir (R/R uygun ise)."""
+async def test_agresif_mod_confidence_42_kabul_eder(portfolio, tmp_path, monkeypatch):
+    """Agresif modda confidence = 42 olan aday kabul edilir (R/R uygun ise)."""
     eng = make_engine(portfolio, tmp_path, "agresif")
     eng.state.enabled = True
     eng.state.daily_date = "2026-06-11"
@@ -382,9 +390,9 @@ async def test_agresif_mod_confidence_50_kabul_eder(portfolio, tmp_path, monkeyp
 
     mock_response = (
         'ONERILER: [{"islem":"AL","sembol":"BTCUSDT","tutar_usdt":500,'
-        '"basari_yuzdesi":50,"zarar_kes":49000,"kar_al":52300,"gerekce":"momentum"}]'
+        '"basari_yuzdesi":42,"zarar_kes":49000,"kar_al":52300,"gerekce":"momentum"}]'
     )
-    # BTC=50000, stop=49000 (risk=1000), hedef=52300 (gain=2300) → R/R=2.3 ≥ 1.3 ✓
+    # BTC=50000, stop=49000 (risk=1000), hedef=52300 (gain=2300) → R/R=2.3 ≥ 1.1 ✓
 
     async def mock_scan(*a, **kw):
         return mock_response
@@ -392,23 +400,23 @@ async def test_agresif_mod_confidence_50_kabul_eder(portfolio, tmp_path, monkeyp
     monkeypatch.setattr(ai, "scan_market_filtered", mock_scan)
     await eng._run_scan()
 
-    assert len(portfolio.positions) == 1, "confidence 50 = min → agresif modda kabul edilmeli"
+    assert len(portfolio.positions) == 1, "confidence 42 = min → agresif modda kabul edilmeli"
 
 
 # ── risk/reward eşiği testleri ───────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_guvenli_mod_rr_1_9_atlar(portfolio, tmp_path, monkeypatch):
-    """Güvenli modda R/R < 2.0 olan aday atlanır."""
+async def test_guvenli_mod_rr_1_7_atlar(portfolio, tmp_path, monkeypatch):
+    """Güvenli modda R/R < 1.8 olan aday atlanır."""
     eng = make_engine(portfolio, tmp_path, "guvenli")
     eng.state.enabled = True
     eng.state.daily_date = "2026-06-11"
 
     mock_response = (
         'ONERILER: [{"islem":"AL","sembol":"BTCUSDT","tutar_usdt":500,'
-        '"basari_yuzdesi":70,"zarar_kes":49000,"kar_al":51900,"gerekce":"test"}]'
+        '"basari_yuzdesi":70,"zarar_kes":49000,"kar_al":51700,"gerekce":"test"}]'
     )
-    # BTC=50000, stop=49000 (risk=1000), hedef=51900 (gain=1900) → R/R=1.9 < 2.0 ✗
+    # BTC=50000, stop=49000 (risk=1000), hedef=51700 (gain=1700) → R/R=1.7 < 1.8 ✗
 
     async def mock_scan(*a, **kw):
         return mock_response
@@ -416,41 +424,19 @@ async def test_guvenli_mod_rr_1_9_atlar(portfolio, tmp_path, monkeypatch):
     monkeypatch.setattr(ai, "scan_market_filtered", mock_scan)
     await eng._run_scan()
 
-    assert len(portfolio.positions) == 0, "R/R 1.9 < 2.0 → güvenli modda atlanmalı"
+    assert len(portfolio.positions) == 0, "R/R 1.7 < 1.8 → güvenli modda atlanmalı"
 
 
 @pytest.mark.asyncio
-async def test_dengeli_mod_rr_1_4_atlar(portfolio, tmp_path, monkeypatch):
-    """Dengeli modda R/R < 1.5 olan aday atlanır."""
+async def test_dengeli_mod_rr_1_2_atlar(portfolio, tmp_path, monkeypatch):
+    """Dengeli modda R/R < 1.3 olan aday atlanır."""
     eng = make_engine(portfolio, tmp_path, "dengeli")
     eng.state.enabled = True
     eng.state.daily_date = "2026-06-11"
 
     mock_response = (
         'ONERILER: [{"islem":"AL","sembol":"BTCUSDT","tutar_usdt":500,'
-        '"basari_yuzdesi":60,"zarar_kes":49500,"kar_al":50700,"gerekce":"test"}]'
-    )
-    # BTC=50000, stop=49500 (risk=500), hedef=50700 (gain=700) → R/R=1.4 < 1.5 ✗
-
-    async def mock_scan(*a, **kw):
-        return mock_response
-
-    monkeypatch.setattr(ai, "scan_market_filtered", mock_scan)
-    await eng._run_scan()
-
-    assert len(portfolio.positions) == 0, "R/R 1.4 < 1.5 → dengeli modda atlanmalı"
-
-
-@pytest.mark.asyncio
-async def test_agresif_mod_rr_1_2_atlar(portfolio, tmp_path, monkeypatch):
-    """Agresif modda R/R < 1.3 olan aday atlanır."""
-    eng = make_engine(portfolio, tmp_path, "agresif")
-    eng.state.enabled = True
-    eng.state.daily_date = "2026-06-11"
-
-    mock_response = (
-        'ONERILER: [{"islem":"AL","sembol":"BTCUSDT","tutar_usdt":500,'
-        '"basari_yuzdesi":55,"zarar_kes":49500,"kar_al":50600,"gerekce":"test"}]'
+        '"basari_yuzdesi":60,"zarar_kes":49500,"kar_al":50600,"gerekce":"test"}]'
     )
     # BTC=50000, stop=49500 (risk=500), hedef=50600 (gain=600) → R/R=1.2 < 1.3 ✗
 
@@ -460,34 +446,37 @@ async def test_agresif_mod_rr_1_2_atlar(portfolio, tmp_path, monkeypatch):
     monkeypatch.setattr(ai, "scan_market_filtered", mock_scan)
     await eng._run_scan()
 
-    assert len(portfolio.positions) == 0, "R/R 1.2 < 1.3 → agresif modda atlanmalı"
+    assert len(portfolio.positions) == 0, "R/R 1.2 < 1.3 → dengeli modda atlanmalı"
+
+
+@pytest.mark.asyncio
+async def test_agresif_mod_rr_1_0_atlar(portfolio, tmp_path, monkeypatch):
+    """Agresif modda R/R < 1.1 olan aday atlanır."""
+    eng = make_engine(portfolio, tmp_path, "agresif")
+    eng.state.enabled = True
+    eng.state.daily_date = "2026-06-11"
+
+    mock_response = (
+        'ONERILER: [{"islem":"AL","sembol":"BTCUSDT","tutar_usdt":500,'
+        '"basari_yuzdesi":55,"zarar_kes":49500,"kar_al":50500,"gerekce":"test"}]'
+    )
+    # BTC=50000, stop=49500 (risk=500), hedef=50500 (gain=500) → R/R=1.0 < 1.1 ✗
+
+    async def mock_scan(*a, **kw):
+        return mock_response
+
+    monkeypatch.setattr(ai, "scan_market_filtered", mock_scan)
+    await eng._run_scan()
+
+    assert len(portfolio.positions) == 0, "R/R 1.0 < 1.1 → agresif modda atlanmalı"
 
 
 # ── günlük işlem limiti testleri ─────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_guvenli_mod_gunluk_1_islem_limiti(portfolio, tmp_path, monkeypatch):
-    """Güvenli modda günlük 1 işlem dolunca tarama atlanır."""
+async def test_guvenli_mod_gunluk_3_islem_limiti(portfolio, tmp_path, monkeypatch):
+    """Güvenli modda günlük 3 işlem dolunca tarama atlanır."""
     eng = make_engine(portfolio, tmp_path, "guvenli")
-    eng.state.enabled = True
-    eng.state.daily_trades = 1  # limit doldu
-
-    called = []
-
-    async def mock_scan(*a, **kw):
-        called.append(True)
-        return ""
-
-    monkeypatch.setattr(ai, "scan_market_filtered", mock_scan)
-    await eng._run_scan()
-
-    assert not called, "Güvenli modda 1 işlem doluyken tarama yapılmamalı"
-
-
-@pytest.mark.asyncio
-async def test_dengeli_mod_gunluk_3_islem_limiti(portfolio, tmp_path, monkeypatch):
-    """Dengeli modda günlük 3 işlem dolunca tarama atlanır."""
-    eng = make_engine(portfolio, tmp_path, "dengeli")
     eng.state.enabled = True
     eng.state.daily_trades = 3  # limit doldu
 
@@ -500,15 +489,15 @@ async def test_dengeli_mod_gunluk_3_islem_limiti(portfolio, tmp_path, monkeypatc
     monkeypatch.setattr(ai, "scan_market_filtered", mock_scan)
     await eng._run_scan()
 
-    assert not called, "Dengeli modda 3 işlem doluyken tarama yapılmamalı"
+    assert not called, "Güvenli modda 3 işlem doluyken tarama yapılmamalı"
 
 
 @pytest.mark.asyncio
-async def test_agresif_mod_gunluk_5_islem_limiti(portfolio, tmp_path, monkeypatch):
-    """Agresif modda günlük 5 işlem dolunca tarama atlanır."""
-    eng = make_engine(portfolio, tmp_path, "agresif")
+async def test_dengeli_mod_gunluk_6_islem_limiti(portfolio, tmp_path, monkeypatch):
+    """Dengeli modda günlük 6 işlem dolunca tarama atlanır."""
+    eng = make_engine(portfolio, tmp_path, "dengeli")
     eng.state.enabled = True
-    eng.state.daily_trades = 5  # limit doldu
+    eng.state.daily_trades = 6  # limit doldu
 
     called = []
 
@@ -519,15 +508,34 @@ async def test_agresif_mod_gunluk_5_islem_limiti(portfolio, tmp_path, monkeypatc
     monkeypatch.setattr(ai, "scan_market_filtered", mock_scan)
     await eng._run_scan()
 
-    assert not called, "Agresif modda 5 işlem doluyken tarama yapılmamalı"
+    assert not called, "Dengeli modda 6 işlem doluyken tarama yapılmamalı"
 
 
 @pytest.mark.asyncio
-async def test_agresif_mod_4_islem_varken_tarama_devam_eder(portfolio, tmp_path, monkeypatch):
-    """Agresif modda 4 işlem yapılmışken tarama devam etmeli (limit 5)."""
+async def test_agresif_mod_gunluk_12_islem_limiti(portfolio, tmp_path, monkeypatch):
+    """Agresif modda günlük 12 işlem dolunca tarama atlanır."""
     eng = make_engine(portfolio, tmp_path, "agresif")
     eng.state.enabled = True
-    eng.state.daily_trades = 4
+    eng.state.daily_trades = 12  # limit doldu
+
+    called = []
+
+    async def mock_scan(*a, **kw):
+        called.append(True)
+        return ""
+
+    monkeypatch.setattr(ai, "scan_market_filtered", mock_scan)
+    await eng._run_scan()
+
+    assert not called, "Agresif modda 12 işlem doluyken tarama yapılmamalı"
+
+
+@pytest.mark.asyncio
+async def test_agresif_mod_10_islem_varken_tarama_devam_eder(portfolio, tmp_path, monkeypatch):
+    """Agresif modda 10 işlem yapılmışken tarama devam etmeli (limit 12)."""
+    eng = make_engine(portfolio, tmp_path, "agresif")
+    eng.state.enabled = True
+    eng.state.daily_trades = 10
     eng.state.daily_date = "2026-06-11"
     eng.state.daily_start_equity = portfolio.cash
 
@@ -540,101 +548,123 @@ async def test_agresif_mod_4_islem_varken_tarama_devam_eder(portfolio, tmp_path,
     monkeypatch.setattr(ai, "scan_market_filtered", mock_scan)
     await eng._run_scan()
 
-    assert called, "Agresif modda 4 işlemde tarama devam etmeli (limit 5)"
+    assert called, "Agresif modda 10 işlemde tarama devam etmeli (limit 12)"
 
 
 # ── günlük zarar limiti testleri ─────────────────────────────────────────────
 
-def test_guvenli_mod_gunluk_zarar_1_pct_kapatir(portfolio, tmp_path):
-    """Güvenli modda %1 zarar → otonom kapanır."""
+def test_guvenli_mod_gunluk_zarar_2_pct_kapatir(portfolio, tmp_path):
+    """Güvenli modda %2 zarar → otonom kapanır."""
     eng = make_engine(portfolio, tmp_path, "guvenli")
-    eng.state.enabled = True
-    eng.state.daily_start_equity = 10_000.0
-    portfolio.cash = 9_890.0  # %1.1 zarar
-
-    eng._check_daily_loss_limit()
-
-    assert not eng.state.enabled, "Güvenli modda %1.1 zarar → kapatılmalı"
-    assert eng.state.risk_locked
-
-
-def test_guvenli_mod_gunluk_zarar_altinda_devam(portfolio, tmp_path):
-    """%0.8 zarar → güvenli mod limiti (%1) aşılmadı."""
-    eng = make_engine(portfolio, tmp_path, "guvenli")
-    eng.state.enabled = True
-    eng.state.daily_start_equity = 10_000.0
-    portfolio.cash = 9_920.0  # %0.8 zarar
-
-    eng._check_daily_loss_limit()
-
-    assert eng.state.enabled, "Güvenli modda %0.8 zarar → devam etmeli"
-    assert not eng.state.risk_locked
-
-
-def test_dengeli_mod_gunluk_zarar_2_pct_kapatir(portfolio, tmp_path):
-    """Dengeli modda %2 zarar → otonom kapanır."""
-    eng = make_engine(portfolio, tmp_path, "dengeli")
     eng.state.enabled = True
     eng.state.daily_start_equity = 10_000.0
     portfolio.cash = 9_780.0  # %2.2 zarar
 
     eng._check_daily_loss_limit()
 
-    assert not eng.state.enabled, "Dengeli modda %2.2 zarar → kapatılmalı"
+    assert not eng.state.enabled, "Güvenli modda %2.2 zarar → kapatılmalı"
     assert eng.state.risk_locked
 
 
-def test_agresif_mod_gunluk_zarar_3_pct_kapatir(portfolio, tmp_path):
-    """Agresif modda %3 zarar → otonom kapanır."""
-    eng = make_engine(portfolio, tmp_path, "agresif")
+def test_guvenli_mod_gunluk_zarar_altinda_devam(portfolio, tmp_path):
+    """%1.5 zarar → güvenli mod limiti (%2) aşılmadı."""
+    eng = make_engine(portfolio, tmp_path, "guvenli")
     eng.state.enabled = True
     eng.state.daily_start_equity = 10_000.0
-    portfolio.cash = 9_680.0  # %3.2 zarar
+    portfolio.cash = 9_850.0  # %1.5 zarar
 
     eng._check_daily_loss_limit()
 
-    assert not eng.state.enabled, "Agresif modda %3.2 zarar → kapatılmalı"
+    assert eng.state.enabled, "Güvenli modda %1.5 zarar → devam etmeli"
+    assert not eng.state.risk_locked
+
+
+def test_dengeli_mod_gunluk_zarar_4_pct_kapatir(portfolio, tmp_path):
+    """Dengeli modda %4 zarar → otonom kapanır."""
+    eng = make_engine(portfolio, tmp_path, "dengeli")
+    eng.state.enabled = True
+    eng.state.daily_start_equity = 10_000.0
+    portfolio.cash = 9_580.0  # %4.2 zarar
+
+    eng._check_daily_loss_limit()
+
+    assert not eng.state.enabled, "Dengeli modda %4.2 zarar → kapatılmalı"
     assert eng.state.risk_locked
 
 
-def test_agresif_mod_2_5_pct_zarar_devam_eder(portfolio, tmp_path):
-    """%2.5 zarar → agresif mod limiti (%3) aşılmadı."""
+def test_agresif_mod_gunluk_zarar_6_pct_kapatir(portfolio, tmp_path):
+    """Agresif modda %6 zarar → otonom kapanır."""
     eng = make_engine(portfolio, tmp_path, "agresif")
     eng.state.enabled = True
     eng.state.daily_start_equity = 10_000.0
-    portfolio.cash = 9_750.0  # %2.5 zarar
+    portfolio.cash = 9_380.0  # %6.2 zarar
 
     eng._check_daily_loss_limit()
 
-    assert eng.state.enabled, "Agresif modda %2.5 zarar → devam etmeli"
+    assert not eng.state.enabled, "Agresif modda %6.2 zarar → kapatılmalı"
+    assert eng.state.risk_locked
+
+
+def test_agresif_mod_4_pct_zarar_devam_eder(portfolio, tmp_path):
+    """%4 zarar → agresif mod limiti (%6) aşılmadı."""
+    eng = make_engine(portfolio, tmp_path, "agresif")
+    eng.state.enabled = True
+    eng.state.daily_start_equity = 10_000.0
+    portfolio.cash = 9_600.0  # %4.0 zarar
+
+    eng._check_daily_loss_limit()
+
+    assert eng.state.enabled, "Agresif modda %4 zarar → devam etmeli"
     assert not eng.state.risk_locked
 
 
 # ── ardışık zarar testleri ───────────────────────────────────────────────────
 
-def test_guvenli_modda_1_zarar_kilitleniyor(portfolio, tmp_path):
-    """Güvenli modda 1 ardışık zarar → cooldown aktif olmalı."""
+def test_guvenli_modda_2_zarar_kilitleniyor(portfolio, tmp_path):
+    """Güvenli modda 2 ardışık zarar → cooldown aktif olmalı."""
     import time as _time
     eng = make_engine(portfolio, tmp_path, "guvenli")
     portfolio.history.extend([
         {"side": "SAT", "symbol": "BTCUSDT", "pnl": -50.0,
          "ts": 0, "qty": 0.01, "price": 49000.0, "usdt": 490.0},
+        {"side": "SAT", "symbol": "ETHUSDT", "pnl": -30.0,
+         "ts": 0, "qty": 0.1, "price": 1900.0, "usdt": 190.0},
     ])
     portfolio.save()
 
     eng._history_len = 0
     eng._check_trades_from_history()
 
-    # Güvenli profil max_consecutive_losses=1: limit dolunca cooldown tetiklenir
-    # consecutive_losses sıfırlanır, cooldown_until gelecekte olmalı
+    # Güvenli profil max_consecutive_losses=2: limit dolunca cooldown tetiklenir
     assert eng.state.cooldown_until > _time.time(), (
-        "Güvenli modda 1 zarar → cooldown süresi ayarlanmalıydı"
+        "Güvenli modda 2 zarar → cooldown süresi ayarlanmalıydı"
     )
 
 
-def test_dengeli_modda_2_zarar_kilitleniyor(portfolio, engine):
-    """Dengeli modda 2 ardışık zarar → cooldown aktif olmalı."""
+def test_dengeli_modda_3_zarar_kilitleniyor(portfolio, engine):
+    """Dengeli modda 3 ardışık zarar → cooldown aktif olmalı."""
     import time as _time
+    portfolio.history.extend([
+        {"side": "SAT", "symbol": "BTCUSDT", "pnl": -50.0,
+         "ts": 0, "qty": 0.01, "price": 49000.0, "usdt": 490.0},
+        {"side": "SAT", "symbol": "ETHUSDT", "pnl": -30.0,
+         "ts": 0, "qty": 0.1, "price": 1900.0, "usdt": 190.0},
+        {"side": "SAT", "symbol": "SOLUSDT", "pnl": -20.0,
+         "ts": 0, "qty": 1.0, "price": 95.0, "usdt": 95.0},
+    ])
+    portfolio.save()
+
+    engine._history_len = 0
+    engine._check_trades_from_history()
+
+    # Dengeli profil max_consecutive_losses=3: 3 zarar sonrası cooldown tetiklenir
+    assert engine.state.cooldown_until > _time.time(), (
+        "Dengeli modda 3 zarar → cooldown süresi ayarlanmalıydı"
+    )
+
+
+def test_dengeli_modda_2_zarar_kilitlenmez(portfolio, engine):
+    """Dengeli modda 2 ardışık zarar → henüz kilitlenmez (limit 3)."""
     portfolio.history.extend([
         {"side": "SAT", "symbol": "BTCUSDT", "pnl": -50.0,
          "ts": 0, "qty": 0.01, "price": 49000.0, "usdt": 490.0},
@@ -646,25 +676,8 @@ def test_dengeli_modda_2_zarar_kilitleniyor(portfolio, engine):
     engine._history_len = 0
     engine._check_trades_from_history()
 
-    # Dengeli profil max_consecutive_losses=2: 2 zarar sonrası cooldown tetiklenir
-    assert engine.state.cooldown_until > _time.time(), (
-        "Dengeli modda 2 zarar → cooldown süresi ayarlanmalıydı"
-    )
-
-
-def test_dengeli_modda_1_zarar_kilitlenmez(portfolio, engine):
-    """Dengeli modda 1 ardışık zarar → henüz kilitlenmez (limit 2)."""
-    portfolio.history.extend([
-        {"side": "SAT", "symbol": "BTCUSDT", "pnl": -50.0,
-         "ts": 0, "qty": 0.01, "price": 49000.0, "usdt": 490.0},
-    ])
-    portfolio.save()
-
-    engine._history_len = 0
-    engine._check_trades_from_history()
-
-    assert engine.state.consecutive_losses == 1
-    assert not engine.state.risk_locked, "Dengeli modda 1 zarar → henüz kilitlenmemeli"
+    assert engine.state.consecutive_losses == 2
+    assert not engine.state.risk_locked, "Dengeli modda 2 zarar → henüz kilitlenmemeli"
 
 
 def test_kazanc_ardisik_zarar_sifirliyor(portfolio, engine):
