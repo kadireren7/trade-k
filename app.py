@@ -250,7 +250,7 @@ class AccountPanel(Static):
 class CommandInput(Input):
     """Input subclass — palette navigation keylerini yakalar."""
 
-    def _on_key(self, event: events.Key) -> None:
+    async def _on_key(self, event: events.Key) -> None:
         app: "TradeApp" = self.app  # type: ignore[assignment]
         if app._palette_visible:
             if event.key in ("down", "tab"):
@@ -276,19 +276,13 @@ class CommandInput(Input):
                 event.prevent_default()
                 event.stop()
                 return
-        # Input boşken q → menüye dön (app binding Input'u dinlemiyor, burada yakala)
-        if event.key == "q" and not self.value:
+        # Input boşken q veya escape → menüye dön
+        if event.key in ("q", "escape") and not self.value:
             app.action_open_menu()
             event.prevent_default()
             event.stop()
             return
-        # Input boşken escape → menüye dön
-        if event.key == "escape" and not self.value:
-            app.action_open_menu()
-            event.prevent_default()
-            event.stop()
-            return
-        super()._on_key(event)
+        await super()._on_key(event)
 
 
 class TradeApp(App):
