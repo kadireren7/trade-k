@@ -103,6 +103,9 @@ PRICE_CHECK_INTERVAL = 2    # 2 saniye
 
 LOG_FILE = Path(__file__).parent / "autonomous_log.jsonl"
 STATE_FILE = Path(__file__).parent / "autonomous_state.json"
+INCIDENT_LOG_FILE = Path(__file__).parent / "logs" / "incidents.jsonl"
+
+_STALE_NOTIFY_COOLDOWN = 300   # stale uyarısı her 5dk'da bir (spam koruma)
 
 # Paper trading maliyet simülasyonu (sadece autonomous mod)
 PAPER_FEE_RATE: float = 0.001   # %0.1 komisyon per taraf
@@ -126,6 +129,7 @@ class AutonomousState:
     cooldown_until: float = 0.0       # ardışık zarar sonrası 2s tarama duraklaması
     last_scan_time: float = 0.0       # son tarama zamanı
     last_analysis_time: float = 0.0   # son pozisyon analizi zamanı
+    daily_trade_limit_override: int = 0  # /limit komutuyla runtime'da üstüne yazılır
 
     def save(self, path: Path = STATE_FILE) -> None:
         path.write_text(json.dumps(asdict(self), indent=2))
@@ -180,6 +184,8 @@ class AutonomousEngine:
         self._task: asyncio.Task | None = None
         self._history_len = len(portfolio.history)
         self.position_decisions: dict[str, str] = {}
+        self._last_stale_notify: float = 0.0     # stale uyarısı spam koruması
+        self._daily_loss_notified: bool = False  # günlük zarar uyarısı bir kez gönderilir
 
     # ── public API ──────────────────────────────────────────────────────────
 
@@ -196,7 +202,12 @@ class AutonomousEngine:
         cfg = self.cfg
         # Custom ayarlar 0 değilse profil değerini geç
         max_pos = getattr(cfg, "custom_max_positions", 0) or p.max_open_positions
-        max_trades = getattr(cfg, "custom_max_daily_trades", 0) or p.max_daily_trades
+        # state override (runtime /limit komutu) > config > profil
+        max_trades = (
+            self.state.daily_trade_limit_override
+            or getattr(cfg, "custom_max_daily_trades", 0)
+            or p.max_daily_trades
+        )
         loss_streak = getattr(cfg, "custom_loss_streak", 0) or p.max_consecutive_losses
         daily_loss = getattr(cfg, "custom_daily_loss_pct", 0.0) or p.daily_loss_limit_percent
 
@@ -253,6 +264,7 @@ class AutonomousEngine:
         self._history_len = len(self.portfolio.history)
         self._task = asyncio.create_task(self._loop())
         self._log_event("start", decision="AÇILDI", reason="Kullanıcı başlattı")
+        self._log_incident("autonomous_started")
         return "Otonom mod açıldı."
 
     async def stop(self, reason: str = "Kullanıcı durdurdu") -> str:
@@ -262,6 +274,7 @@ class AutonomousEngine:
             self._task.cancel()
             self._task = None
         self._log_event("stop", decision="KAPATILDI", reason=reason)
+        self._log_incident("autonomous_stopped", reason=reason)
         return "Otonom mod kapatıldı."
 
     def reset_risk_lock(self) -> None:
@@ -270,6 +283,75 @@ class AutonomousEngine:
         self.state.consecutive_losses = 0
         self.state.daily_trades = 0
         self.state.save(self._state_path)
+
+    def _log_incident(self, event_type: str, **kwargs) -> None:
+        """Kritik olayları logs/incidents.jsonl'e yaz."""
+        record = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "event": event_type,
+            **kwargs,
+        }
+        try:
+            INCIDENT_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with INCIDENT_LOG_FILE.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+    def set_daily_trade_limit(self, n: int) -> str:
+        """Runtime'da günlük işlem limitini değiştir (/limit komutu için)."""
+        if n < 1 or n > 50:
+            return f"❌ Geçersiz limit: {n}. 1-50 arasında olmalı."
+        self.state.daily_trade_limit_override = n
+        self.state.save(self._state_path)
+        self._log_incident("limit_changed", new_limit=n)
+        return f"✅ Günlük işlem limiti → <b>{n}</b> (profil varsayılanı geçici olarak devre dışı)"
+
+    async def emergency_close(self) -> dict:
+        """Acil: tüm açık pozisyonları piyasa fiyatından kapat.
+
+        Otonom modu durdurur, risk kilidi açar, her pozisyonu kapatmayı dener.
+        Döndürür: {"closed": [...], "errors": [...], "total_pnl": float}
+        """
+        await self.stop("Acil kapatma komutu")
+        self.state.risk_locked = True
+        self.state.save(self._state_path)
+        self._log_incident("emergency_close_started",
+                           n_positions=len(self.portfolio.positions))
+
+        closed: list[dict] = []
+        errors: list[str] = []
+
+        for sym in list(self.portfolio.positions.keys()):
+            pos = self.portfolio.positions.get(sym)
+            if not pos:
+                continue
+            cur = self.feed.price(sym)
+            if not cur:
+                try:
+                    cur = await market.quote(sym)
+                except Exception:
+                    errors.append(sym)
+                    self._log_incident("emergency_close_error", symbol=sym,
+                                       reason="fiyat alınamadı")
+                    continue
+            try:
+                result = self.portfolio.sell(sym, cur)
+                hist = self.portfolio.history[-1] if self.portfolio.history else {}
+                pnl = hist.get("pnl_usdt") or hist.get("pnl", 0.0)
+                closed.append({"symbol": sym, "exit_price": cur, "pnl": pnl,
+                               "result": result})
+                self._log_incident("emergency_close_position", symbol=sym,
+                                   exit_price=cur, pnl=pnl)
+            except Exception as exc:
+                errors.append(sym)
+                self._log_incident("emergency_close_error", symbol=sym, reason=str(exc))
+
+        total_pnl = sum(c["pnl"] for c in closed)
+        self._log_incident("emergency_close_done",
+                           closed=len(closed), errors=len(errors), total_pnl=total_pnl)
+        self.portfolio.save()
+        return {"closed": closed, "errors": errors, "total_pnl": total_pnl}
 
     def status_text(self) -> str:
         p = self.effective_profile
@@ -402,6 +484,7 @@ class AutonomousEngine:
             self.state.risk_locked = False
             self.state.daily_leveraged_trades = 0
             self.state.daily_leverage_locked = False
+            self._daily_loss_notified = False  # yeni gün → uyarı tekrar gönderilsin
             all_prices = {s: t.price for s, t in self.feed.tickers.items()
                           if t.price > 0}
             self.state.daily_start_equity = self.portfolio.equity(all_prices)
@@ -469,6 +552,29 @@ class AutonomousEngine:
             )
             self._log_event("shutdown",
                             reason=f"Günlük zarar limiti: {loss_pct:.1f}%")
+            self._log_incident(
+                "daily_loss_limit",
+                loss_pct=round(loss_pct, 2),
+                limit_pct=p.daily_loss_limit_percent,
+                cur_equity=round(cur_eq, 2),
+                start_equity=round(self.state.daily_start_equity, 2),
+            )
+            if not self._daily_loss_notified:
+                self._daily_loss_notified = True
+                _msg = (
+                    f"🔴 <b>OTONOM DURDURULDU — Günlük Zarar Limiti</b>\n\n"
+                    f"Günlük zarar: <b>{loss_pct:.1f}%</b> "
+                    f"(limit: %{p.daily_loss_limit_percent:.0f})\n"
+                    f"Başlangıç varlık: {self.state.daily_start_equity:,.2f} USDT\n"
+                    f"Şu an varlık: {cur_eq:,.2f} USDT\n\n"
+                    f"⏸ Yeni işlem açılmıyor.\n"
+                    f"Devam için: /sifirla"
+                )
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(_notify.get().send(_msg))
+                except RuntimeError:
+                    pass  # async loop yok (sync bağlam / test)
 
     async def apply_decision(
         self,
@@ -543,10 +649,10 @@ class AutonomousEngine:
                     f"{close_reason}"
                 )
                 self.log(f"   {result_str}")
-                # Telegram bildirimi
+                # Telegram bildirimi — pnl_usdt veya pnl alanına fallback
                 _last = (self.portfolio.history[-1]
                          if self.portfolio.history else {})
-                _pnl = _last.get("pnl_usdt", 0.0)
+                _pnl = _last.get("pnl_usdt") or _last.get("pnl", 0.0)
                 _pct = _last.get("pnl_pct", 0.0)
                 _qty = _last.get("qty", 0.0)
                 _emoji = "✅" if _pnl >= 0 else "❌"
@@ -748,6 +854,25 @@ class AutonomousEngine:
     async def _run_scan(self) -> None:
         """15 dakikada bir: yeni fırsat ara ve uygun adayda paper trade aç."""
         p = self.effective_profile
+
+        # WebSocket/veri tazeliği kontrolü — stale fiyatla işlem açma
+        crypto_syms = [s for s in self.feed.tickers if s.endswith("USDT")]
+        ws_ok = getattr(self.feed, "ws_connected", True)
+        if crypto_syms and not ws_ok:
+            now = time.time()
+            self._log_event("skip", reason="WebSocket kopuk — stale price riski")
+            self.log("[red3][OTONOM] Tarama atlandı: WebSocket bağlantısı kopuk.[/]")
+            self._log_incident("stale_skip", reason="ws_connected=False")
+            if now - self._last_stale_notify >= _STALE_NOTIFY_COOLDOWN:
+                self._last_stale_notify = now
+                asyncio.ensure_future(_notify.get().send(
+                    "⚠️ <b>OTONOM tarama atlandı</b>\n"
+                    "WebSocket kopuk — fiyat verisi güncel değil.\n"
+                    "Bağlantı gelince tarama devam eder.",
+                    silent=True,
+                ))
+            return
+
         if self.state.risk_locked:
             self._log_event("skip", reason="risk kilidi aktif")
             self.log("[red3][OTONOM] Tarama atlandı: risk kilidi aktif.[/]")

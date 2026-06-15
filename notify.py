@@ -174,6 +174,8 @@ _BOT_COMMANDS = [
     ("gecmis",       "Son işlemler özeti"),
     ("otonom",       "Otonom mod: ac/kapat/durum + [long|short|scalp|tam...]"),
     ("durdur",       "Otonom modu durdur"),
+    ("acil",         "ACİL: tüm pozisyonları kapat, otonom durdur"),
+    ("limit",        "Günlük işlem limiti: /limit 5 veya /limit durum"),
     ("mod",          "Risk profili: guvenli / dengeli / agresif"),
     ("sat",          "Pozisyon kapat: /sat BTC"),
     ("fiyat",        "Anlık fiyat: /fiyat BTC"),
@@ -326,6 +328,10 @@ class TelegramCommandBot:
             return await self._otonom(args)
         if cmd in ("durdur", "stop", "dur"):
             return await self._otonom(["kapat"])
+        if cmd in ("acil", "emergency", "kill", "panic", "hepsini_kapat"):
+            return await self._acil()
+        if cmd in ("limit",):
+            return await self._limit(args)
         if cmd in ("sifirla", "reset", "kilit"):
             return await self._sifirla()
         if cmd == "sat":
@@ -364,6 +370,10 @@ class TelegramCommandBot:
             "/otonom kapat — Otonom durdur\n"
             "/otonom durum — Durum ve istatistik\n"
             "/durdur — Hızlı durdur\n"
+            "\n<b>🚨 Güvenlik &amp; Acil:</b>\n"
+            "/acil — Tüm pozisyonları kapat + otonom durdur\n"
+            "/limit 5 — Günlük işlem limitini değiştir\n"
+            "/limit durum — Limit bilgisi\n"
             "\n<b>⚙️ İşlem &amp; Ayarlar:</b>\n"
             "/sat BTC — Pozisyon kapat\n"
             "/mod guvenli|dengeli|agresif — Risk profili\n"
@@ -438,18 +448,85 @@ class TelegramCommandBot:
             if not self._engine:
                 return "❌ Motor bağlı değil"
             e = self._engine
-            status = "🟢 AÇIK" if e.state.enabled else "⚫ KAPALI"
+            st = e.state
+            p_eff = e.effective_profile
+            status = "🟢 AÇIK" if st.enabled else "⚫ KAPALI"
             mod = getattr(self._cfg, "otonom_trade_type", "long") if self._cfg else "?"
             profil = getattr(self._cfg, "autonomous_mode", "dengeli") if self._cfg else "?"
-            n_pos = len(self._portfolio.positions) if self._portfolio else "?"
-            return (
+            n_pos = len(self._portfolio.positions) if self._portfolio else 0
+            risk_str = "🔴 AKTİF" if st.risk_locked else "✅ Yok"
+
+            # Günlük zarar hesapla
+            daily_loss_str = "—"
+            try:
+                import market as _mkt_mod
+                prices = {s: tk.price for s, tk in e.feed.tickers.items()
+                          if tk.price > 0}
+                cur_eq = (self._portfolio.equity(prices)
+                          if self._portfolio and prices else 0.0)
+                if st.daily_start_equity and cur_eq:
+                    loss_pct = ((st.daily_start_equity - cur_eq)
+                                / st.daily_start_equity * 100)
+                    sign = "+" if loss_pct <= 0 else ""
+                    color_tag = "" if loss_pct <= 0 else ""
+                    daily_loss_str = (
+                        f"{'+' if loss_pct <= 0 else ''}{-loss_pct:.2f}% "
+                        f"(limit: %{p_eff.daily_loss_limit_percent:.0f})"
+                    )
+            except Exception:
+                pass
+
+            # Cooldown kalan süre
+            cooldown_str = ""
+            import time as _time_mod
+            if st.cooldown_until and _time_mod.time() < st.cooldown_until:
+                rem = int(st.cooldown_until - _time_mod.time()) // 60
+                cooldown_str = f"\n⏳ Circuit breaker soğuma: {rem}dk kaldı"
+
+            # WebSocket durumu
+            ws_ok = getattr(e.feed, "ws_connected", True)
+            ws_str = "✅ Bağlı" if ws_ok else "⚠️ Kopuk"
+
+            # Pozisyon listesi
+            pos_list = ""
+            if self._portfolio and self._portfolio.positions:
+                lines = []
+                for sym, pos in list(self._portfolio.positions.items())[:5]:
+                    name = sym.replace("USDT", "")
+                    side = "L" if pos.direction == "long" else "S"
+                    lines.append(f"  • {name} [{side}] @ {pos.entry:,.4f}")
+                pos_list = "\n" + "\n".join(lines)
+                if len(self._portfolio.positions) > 5:
+                    pos_list += f"\n  ...ve {len(self._portfolio.positions)-5} daha"
+
+            last_scan_str = "—"
+            if st.last_scan_time:
+                import time as _t
+                ago = int(_t.time() - st.last_scan_time) // 60
+                last_scan_str = f"{ago}dk önce"
+
+            limit_str = (f"{st.daily_trade_limit_override} ⚡(override)"
+                         if st.daily_trade_limit_override
+                         else str(p_eff.max_daily_trades))
+
+            msg = (
                 f"🤖 <b>Otonom Durum</b>\n\n"
                 f"Durum: {status}\n"
-                f"Mod: <b>{mod.upper()}</b>\n"
-                f"Profil: {profil}\n"
-                f"Bugünkü işlem: {e.state.daily_trades}\n"
-                f"Açık pozisyon: {n_pos}"
+                f"Mod: <b>{mod.upper()}</b> | Profil: <b>{profil}</b>\n"
+                f"İşlem: {st.daily_trades}/{limit_str} bugün\n"
+                f"Açık pozisyon: {n_pos}/{p_eff.max_open_positions}{pos_list}\n"
+                f"Risk kilidi: {risk_str}\n"
+                f"Günlük K/Z: {daily_loss_str}\n"
+                f"WebSocket: {ws_str}\n"
+                f"Son tarama: {last_scan_str}"
+                f"{cooldown_str}\n\n"
+                f"📝 <i>Paper mode — gerçek para riski yok</i>"
             )
+            if st.risk_locked:
+                msg += "\n\n⚠️ <b>Risk kilidi aktif — yeni işlem açılmıyor.</b>\nDevam: /sifirla"
+            if not ws_ok:
+                msg += "\n\n⚠️ <b>WebSocket kopuk — tarama duraklatıldı.</b>"
+            return msg
         if sub == "ac":
             if not self._engine or not self._cfg:
                 return "❌ Motor bağlı değil"
@@ -485,6 +562,62 @@ class TelegramCommandBot:
                 return f"✅ Otonom mod açıldı: <b>{trade_arg.upper()}</b>"
             return f"⚠️ {result}"
         return "Kullanım:\n/otonom ac [long|short|longshort|scalp|kaldirac|tam]\n/otonom kapat\n/otonom durum"
+
+    async def _acil(self) -> str:
+        """Acil kapatma: tüm pozisyonları kapat + otonom durdur."""
+        if not self._engine or not self._portfolio:
+            return "❌ Motor veya portföy bağlı değil"
+        if not self._portfolio.positions:
+            await self._engine.stop("Acil kapatma — pozisyon yok")
+            return "⏹ Otonom durduruldu. Açık pozisyon yok."
+        self._log("[bold red3]📱 Telegram: /acil komutu alındı[/]")
+        result = await self._engine.emergency_close()
+        closed = result["closed"]
+        errors = result["errors"]
+        total_pnl = result["total_pnl"]
+        sign = "+" if total_pnl >= 0 else ""
+        lines = [f"🚨 <b>ACİL KAPATMA TAMAMLANDI</b>\n"]
+        lines.append(f"Otonom: ⏹ Durduruldu | Risk kilidi: 🔴 Aktif")
+        lines.append(f"Kapatılan: <b>{len(closed)}</b> | Hata: {len(errors)}\n")
+        for c in closed:
+            sym = c["symbol"].replace("USDT", "")
+            pnl = c["pnl"]
+            em = "✅" if pnl >= 0 else "❌"
+            lines.append(
+                f"{em} {sym}: {'+' if pnl >= 0 else ''}{pnl:,.2f} USDT "
+                f"@ {c['exit_price']:,.4f}"
+            )
+        if errors:
+            lines.append(f"\n⚠️ Kapatılamadı: {', '.join(e.replace('USDT','') for e in errors)}")
+        lines.append(f"\n<b>Net K/Z: {sign}{total_pnl:,.2f} USDT</b>")
+        lines.append("\nYeni işlem açmak için önce /sifirla yapın.")
+        return "\n".join(lines)
+
+    async def _limit(self, args: list) -> str:
+        """Günlük işlem limitini runtime'da değiştir."""
+        if not self._engine:
+            return "❌ Motor bağlı değil"
+        if not args or args[0].lower() == "durum":
+            st = self._engine.state
+            p = self._engine.effective_profile
+            override = st.daily_trade_limit_override
+            current_limit = override if override else p.max_daily_trades
+            src = "⚡ override" if override else "profil"
+            return (
+                f"📊 <b>Günlük İşlem Limiti</b>\n\n"
+                f"Aktif limit: <b>{current_limit}</b> ({src})\n"
+                f"Bugün yapılan: {st.daily_trades}\n"
+                f"Profil varsayılanı: {p.max_daily_trades}\n\n"
+                f"Değiştirmek için: /limit 5"
+            )
+        raw = args[0]
+        if not raw.isdigit():
+            return f"❌ Geçersiz değer: <b>{raw}</b>\nKullanım: /limit 5"
+        n = int(raw)
+        msg = self._engine.set_daily_trade_limit(n)
+        if msg.startswith("✅"):
+            self._log(f"[cyan]📱 Telegram: /limit → {n}[/]")
+        return msg
 
     async def _sat(self, args: list) -> str:
         if not self._portfolio:

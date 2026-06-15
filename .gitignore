@@ -12,7 +12,23 @@ autonomous_state.json
 autonomous_log.jsonl
 recommendations.json
 watchlist.json
+
+# Gizli anahtarlar / token dosyaları — ASLA commit etme
 .env
+.env.*
+!.env.example
+config.local.js
+config.local.*
+secrets.*
+*.secret
+*.token
+telegram_token.txt
+*_credentials.json
+
+# Olay / incident logları
+logs/
+data/incidents.jsonl
+report_*.txt
 
 # Geçici
 *.tmp

@@ -196,13 +196,76 @@ Telegram'dan uygulamayı uzaktan kontrol edebilirsin. Sadece yetkili `chat_id`'d
 | `/otonom ac kaldirac` | Kaldıraç modunu başlat |
 | `/otonom ac tam` | Tüm modları başlat |
 | `/otonom kapat` | Otonom modu durdur |
-| `/otonom durum` | Durum, mod, profil, bugünkü işlem |
+| `/otonom durum` | Detaylı durum (equity, loss%, ws, cooldown, pozisyonlar) |
 | `/durdur` | Otonom modu hızlıca durdur |
+| `/acil` | **ACİL:** Tüm pozisyonları kapat + otonom durdur |
+| `/limit 5` | Günlük işlem limitini runtime'da değiştir (1-50) |
+| `/limit durum` | Aktif limit ve bugünkü kullanım |
 | `/sat BTC` | Pozisyonu kapat (paper) |
 | `/mod guvenli\|dengeli\|agresif` | Risk profilini değiştir |
 | `/sifirla` | Risk kilidini sıfırla |
 | `/ping` | Bağlantı testi |
 | `/yardim` | Tam komut listesi |
+
+---
+
+## Güvenlik — Token & Secret Yönetimi
+
+### İlk kurulum (.env ile)
+
+```bash
+cp .env.example .env
+# .env dosyasını aç ve gerçek değerleri yaz:
+#   TELEGRAM_TOKEN=<BotFather'dan aldığın token>
+#   TELEGRAM_CHAT_ID=<chat ID>
+#   ANTHROPIC_API_KEY=<Claude key>
+```
+
+`.env` dosyası `.gitignore`'da — asla repo'ya commit edilmez.
+
+### Telegram Token Sızdıysa Yapılacaklar
+
+Token git geçmişine veya herkese açık bir yere düştüyse:
+
+1. **Token hemen iptal et:** Telegram'da `@BotFather` → `/revoke` → botu seç → onayla
+2. **Yeni token al:** `/newbot` veya `/mybots` → `API Token`
+3. **`.env` dosyasını güncelle:** `TELEGRAM_TOKEN=<yeni_token>`
+4. **`config.json`'daki eski token'ı temizle** (varsa)
+5. Git geçmişini temizlemek opsiyonel — token revoke edilince geçmişte kalan değer geçersizdir
+
+> **Not:** `config.json` `.gitignore`'da. Bu dosyayı asla `git add` ile ekleme.
+
+### Neyi Commit Etme
+
+```
+❌ config.json          — Telegram token, API key, şifre hash
+❌ .env                 — Tüm secret'lar
+❌ account.json         — Portföy verisi
+❌ autonomous_state.json
+❌ *.token, secrets.*   — Herhangi bir secret dosyası
+✅ .env.example         — Sadece placeholder içerir, commit edilebilir
+```
+
+---
+
+## Otonom Güvenlik Özellikleri (M2.5)
+
+| Özellik | Açıklama |
+|---|---|
+| **Günlük zarar limiti bildirimi** | Limit tetiklenince Telegram'a net uyarı gider |
+| **WebSocket stale koruması** | WS kopuksa tarama atlanır, spam olmadan bildirim |
+| **/acil komutu** | Tüm pozisyonları anında kapat + otonom durdur |
+| **/limit komutu** | Günlük işlem limitini runtime'da değiştir |
+| **Zengin /otonom durum** | Equity, loss%, ws durumu, cooldown, pozisyon listesi |
+| **PnL bildirimi düzeltildi** | Satış/kapanış Telegram mesajında K/Z artık doğru |
+| **Incident log** | Kritik olaylar `logs/incidents.jsonl`'e kalıcı yazılır |
+| **Restart güvenliği** | Bot restart → otonom kapalı başlar, açık pozisyonlar korunur |
+
+### Restart Davranışı
+
+Bot yeniden başlatılınca otonom mod **otomatik açılmaz** — bu bilinçli güvenlik kararıdır.
+Açık pozisyonların stop/target koruması anında devam eder.
+Otonom devam için: `/otonom ac [mod]`
 
 ---
 
